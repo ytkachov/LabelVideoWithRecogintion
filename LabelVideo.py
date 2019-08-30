@@ -23,8 +23,6 @@ except ImportError:
     if sys.version_info.major >= 3:
         import sip
         sip.setapi('QVariant', 2)
-    from PyQt4.QtGui import *
-    from PyQt4.QtCore import *
 
 from libs.resources import *
 from libs.constants import *
@@ -44,6 +42,7 @@ from libs.yolo_io import YoloReader
 from libs.yolo_io import TXT_EXT
 from libs.ustr import ustr
 from libs.hashableQListWidgetItem import HashableQListWidgetItem
+from libs.recognitionWidget import *
 
 __appname__ = 'labelImg'
 
@@ -62,7 +61,7 @@ class WindowMixin(object):
         toolbar.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
         if actions:
             addActions(toolbar, actions)
-        self.addToolBar(Qt.LeftToolBarArea, toolbar)
+        self.addToolBar(Qt.TopToolBarArea, toolbar)
         return toolbar
 
 
@@ -161,6 +160,10 @@ class MainWindow(QMainWindow, WindowMixin):
         self.filedock = QDockWidget(getStr('fileList'), self)
         self.filedock.setObjectName(getStr('files'))
         self.filedock.setWidget(fileListContainer)
+
+        # create auto-recognition properties widget
+        #self.recognitionDock = Recognition(getStr('recognitionProperties'), True, ['C:/venv/models/research/object_detection/faster_rcnn_inception_v2_excavator_2/frozen_inference_graph.pb'], self)
+        self.recognitionDock = Recognition(getStr('recognitionProperties'), self.settings.get(SETTING_AUTO_DETECTION), self)
 
         self.zoomWidget = ZoomWidget()
         self.colorDialog = ColorDialog(parent=self)
@@ -1118,6 +1121,7 @@ class MainWindow(QMainWindow, WindowMixin):
         settings[SETTING_SINGLE_CLASS] = self.singleClassMode.isChecked()
         settings[SETTING_PAINT_LABEL] = self.displayLabelOption.isChecked()
         settings[SETTING_DRAW_SQUARE] = self.drawSquaresOption.isChecked()
+        settings[SETTING_AUTO_DETECTION] = self.recognitionDock.Settings()
         settings.save()
 
     def loadRecent(self, filename):
@@ -1460,7 +1464,7 @@ def get_main_app(argv=[]):
     app.setApplicationName(__appname__)
     app.setWindowIcon(newIcon("app"))
     # Tzutalin 201705+: Accept extra agruments to change predefined class file
-    # Usage : labelImg.py image predefClassFile saveDir
+    # Usage : LabelVideo.py image predefClassFile saveDir
     win = MainWindow(argv[1] if len(argv) >= 2 else None,
                      argv[2] if len(argv) >= 3 else os.path.join(
                          os.path.dirname(sys.argv[0]),
