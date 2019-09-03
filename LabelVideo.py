@@ -993,6 +993,7 @@ class MainWindow(QMainWindow, WindowMixin):
                                       % (e, unicodeFilePath))
                     self.status("Error reading %s" % unicodeFilePath)
                     return False
+
                 self.imageData = self.labelFile.imageData
                 self.lineColor = QColor(*self.labelFile.lineColor)
                 self.fillColor = QColor(*self.labelFile.fillColor)
@@ -1010,6 +1011,7 @@ class MainWindow(QMainWindow, WindowMixin):
                                   u"<p>Make sure <i>%s</i> is a valid image file." % unicodeFilePath)
                 self.status("Error reading %s" % unicodeFilePath)
                 return False
+
             self.status("Loaded %s" % os.path.basename(unicodeFilePath))
             self.image = image
             self.filePath = unicodeFilePath
@@ -1022,6 +1024,9 @@ class MainWindow(QMainWindow, WindowMixin):
             self.paintCanvas()
             self.addRecentFile(self.filePath)
             self.toggleActions(True)
+
+            # start object detection
+            self.recognitionDock.ProcessImage(self.filePath)
 
             # Label xml file and show bound box according to its filename
             # if self.usingPascalVocFormat is True:

@@ -4,7 +4,7 @@ import sys
 import tensorflow as tf
 import datetime
 
-import cv2
+from PIL import Image
 
 sys.path.append("c:/venv/models/research")
 
@@ -17,6 +17,9 @@ class ObjectDetector:
         self.path_to_frozen_graph = graphPath
         self.path_to_labels = labelMapPath
 
+        self.detection_masks = None
+        self.detection_boxes = None
+        self.detection_masks_reframed = None
         self.detection_graph = tf.Graph()
         with self.detection_graph.as_default():
             od_graph_def = tf.GraphDef()
@@ -42,6 +45,7 @@ class ObjectDetector:
                 # The following processing is only for single image
                 self.detection_boxes = tf.squeeze(self.tensor_dict['detection_boxes'], [0])
                 self.detection_masks = tf.squeeze(self.tensor_dict['detection_masks'], [0])
+
                 # Reframe is required to translate mask from box coordinates to image coordinates and fit the image size.
                 self.real_num_detection = tf.cast(self.tensor_dict['num_detections'][0], tf.int32)
                 self.detection_boxes = tf.slice(self.detection_boxes, [0, 0], [self.real_num_detection, -1])
@@ -52,16 +56,17 @@ class ObjectDetector:
             self.session.close()
 
     def _run_inference_for_single_image(self, image):
-        if self.detection_masks_reframed is None or self.image_shape_1 != image.shape[1] or self.image_shape_2 != image.shape[2]:
-            self.image_shape_1, self.image.shape_shape_2 = image.shape[1], image.shape[2]
-            self.detection_masks_reframed = utils_ops.reframe_box_masks_to_image_masks(self.detection_masks,
-                                                                                       self.detection_boxes,
-                                                                                       self.image_shape_1,
-                                                                                       self.image_shape_2)
-            self.detection_masks_reframed = tf.cast(tf.greater(self.detection_masks_reframed, 0.5), tf.uint8)
+        if self.detection_masks is not None:
+            if self.detection_masks_reframed is None or self.image_shape_1 != image.shape[1] or self.image_shape_2 != image.shape[2]:
+                self.image_shape_1, self.image_shape_2 = image.shape[1], image.shape[2]
+                self.detection_masks_reframed = utils_ops.reframe_box_masks_to_image_masks(self.detection_masks,
+                                                                                           self.detection_boxes,
+                                                                                           self.image_shape_1,
+                                                                                           self.image_shape_2)
+                self.detection_masks_reframed = tf.cast(tf.greater(self.detection_masks_reframed, 0.5), tf.uint8)
 
-            # Follow the convention by adding back the batch dimension
-            self.tensor_dict['detection_masks'] = tf.expand_dims(self.detection_masks_reframed, 0)
+                # Follow the convention by adding back the batch dimension
+                self.tensor_dict['detection_masks'] = tf.expand_dims(self.detection_masks_reframed, 0)
 
         image_tensor = tf.get_default_graph().get_tensor_by_name('image_tensor:0')
 
@@ -79,8 +84,15 @@ class ObjectDetector:
 
         return output_dict
 
-    def Detect(self, img):
+    def _load_image_into_numpy_array(self, img):
+        (im_width, im_height) = img.size
+        return np.array(img.getdata()).reshape((im_height, im_width, 3)).astype(np.uint8)
+
+    def Detect(self, img_path):
+        img = Image.open(img_path)
+        image_np = self._load_image_into_numpy_array(img)
+        image_np_expanded = np.expand_dims(image_np, axis=0)
         with self.detection_graph.as_default():
-            return self._run_inference_for_single_image(img)
+            return self._run_inference_for_single_image(image_np_expanded)
 
 

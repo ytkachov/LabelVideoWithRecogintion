@@ -73,13 +73,58 @@ class Recognition(QDockWidget):
         if self.detectionModelsCombobox.currentText() != ADD_MODEL_COMMAND:
             self.currentModelName = self.detectionModelsCombobox.currentText()
 
+    # Public methods
     def Settings(self):
         settings = {RUN_DETECTION: self.runDetection, MODEL_LIST: self.modelList, CURRENT_MODEL_NAME: self.currentModelName}
         return pickle.dumps(settings)
 
+    def ProcessImage(self, imgname):
+        self.currentImageName = imgname
+        #  run detection in separate thread
+        worker = Worker(self._detect_objects, self.currentImageName)  # Any other args, kwargs are passed to the run function
+        worker.signals.result.connect(self._on_detection_result)
+        worker.signals.error.connect(self._on_detection_error)
+        worker.signals.finished.connect(self._on_detection_finished)
+
+        # Execute
+        self.threadpool.start(worker)
+
+    # signals
+    objects_detected = pyqtSignal(tuple)
+
+    # private methods
+    def _detect_objects(self, image_path):
+        return (image_path, self.currentObjectDetector.Detect(image_path))
+
+    def _on_detection_result(self, detection_result):
+        self.objects_detected.emit(detection_result)
+
+    def _on_detection_error(self, restuple):
+        str = restuple[2]
+
+    def _on_detection_finished(self):
+        self.detectionModelsCombobox.setEnabled(True)
+        self.runDetectionCheckbox.setEnabled(True)
+
     def _run_detection_changed(self, item= None):
         self.runDetection = self.runDetectionCheckbox.isChecked()
         self.detectionModelsCombobox.setVisible(self.runDetection)
+
+    def _load_model(self, modelName):
+        od = ObjectDetector(modelName, r'C:\venv\models\research\object_detection\faster_rcnn_inception_v2_excavator_1\excavator_labelmap.pbtxt')
+        return od
+
+    def _on_loading_result(self, objectDetector):
+        if objectDetector != None:
+            self.objectDetectors[self.currentModelName] = objectDetector
+            self.currentObjectDetector = objectDetector
+
+    def _on_loading_finished(self):
+        self.detectionModelsCombobox.setEnabled(True)
+        self.runDetectionCheckbox.setEnabled(True)
+
+    def _on_loading_error(self, restuple):
+        str = restuple[2]
 
     def _model_selected(self, idx):
         # remember current model index
@@ -134,21 +179,3 @@ class Recognition(QDockWidget):
 
             # Execute
             self.threadpool.start(worker)
-
-    def _on_loading_result(self, objectDetector):
-        if objectDetector != None:
-            self.objectDetectors[self.currentModelName] = objectDetector
-            self.currentObjectDetector = objectDetector
-
-    def _on_loading_finished(self):
-        self.detectionModelsCombobox.setEnabled(True)
-        self.runDetectionCheckbox.setEnabled(True)
-
-    def _load_model(self, modelName):
-        od = ObjectDetector(modelName, r'C:\venv\models\research\object_detection\faster_rcnn_inception_v2_excavator_1\excavator_labelmap.pbtxt')
-        od.Detect(10)
-
-        return od
-
-    def _on_loading_error(self, restuple):
-        str = restuple[2]
