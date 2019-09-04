@@ -10,6 +10,7 @@ except ImportError:
 #from PyQt4.QtOpenGL import *
 
 from libs.shape import Shape
+from libs.detectedShape import  DetectedShape
 from libs.utils import distance
 
 CURSOR_DEFAULT = Qt.ArrowCursor
@@ -38,6 +39,7 @@ class Canvas(QWidget):
         # Initialise local state.
         self.mode = self.EDIT
         self.shapes = []
+        self.detectedShapes = []
         self.current = None
         self.selectedShape = None  # save the selected shape here
         self.selectedShapeCopy = None
@@ -445,11 +447,16 @@ class Canvas(QWidget):
         p.translate(self.offsetToCenter())
 
         p.drawPixmap(0, 0, self.pixmap)
+
+        for dshape in self.detectedShapes:
+            dshape.paint(p)
+
         Shape.scale = self.scale
         for shape in self.shapes:
             if (shape.selected or not self._hideBackround) and self.isVisible(shape):
                 shape.fill = shape.selected or shape == self.hShape
                 shape.paint(p)
+
         if self.current:
             self.current.paint(p)
             self.line.paint(p)
@@ -688,11 +695,16 @@ class Canvas(QWidget):
     def loadPixmap(self, pixmap):
         self.pixmap = pixmap
         self.shapes = []
+        self.detectedShapes = []
         self.repaint()
 
     def loadShapes(self, shapes):
         self.shapes = list(shapes)
         self.current = None
+        self.repaint()
+
+    def loadDetectedShapes(self, dshapes):
+        self.detectedShapes = list(dshapes)
         self.repaint()
 
     def setShapeVisible(self, shape, value):

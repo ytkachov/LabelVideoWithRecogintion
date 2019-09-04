@@ -12,6 +12,8 @@ from object_detection.utils import ops as utils_ops
 from object_detection.utils import label_map_util
 from object_detection.utils import visualization_utils as vis_util
 
+from libs.detectedShape import *
+
 class ObjectDetector:
     def __init__(self, graphPath, labelMapPath):
         self.path_to_frozen_graph = graphPath
@@ -90,9 +92,25 @@ class ObjectDetector:
 
     def Detect(self, img_path):
         img = Image.open(img_path)
+        width, height = img.size
+
         image_np = self._load_image_into_numpy_array(img)
         image_np_expanded = np.expand_dims(image_np, axis=0)
         with self.detection_graph.as_default():
-            return self._run_inference_for_single_image(image_np_expanded)
+            output_dict = self._run_inference_for_single_image(image_np_expanded)
+
+            i = 0
+            dshapes = []
+            while output_dict["detection_scores"][i] > 0.1:
+                d_class = output_dict["detection_classes"][i]
+                d_label = self.category_index[d_class]['name']
+
+                d_score = output_dict["detection_scores"][i]
+                (ymin, xmin, ymax, xmax) = output_dict["detection_boxes"][i]
+                d_extent = (int(xmin * width) , int(ymin * height), int(xmax * width), int(ymax * height))
+                dshapes.append(DetectedShape(str.format('{1}: {0}', d_label, d_class), d_score, d_extent))
+                i += 1
+
+            return dshapes
 
 

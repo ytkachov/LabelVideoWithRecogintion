@@ -43,6 +43,7 @@ from libs.yolo_io import TXT_EXT
 from libs.ustr import ustr
 from libs.hashableQListWidgetItem import HashableQListWidgetItem
 from libs.recognitionWidget import *
+from libs.detectedShape import *
 
 __appname__ = 'labelImg'
 
@@ -164,6 +165,7 @@ class MainWindow(QMainWindow, WindowMixin):
         # create auto-recognition properties widget
         #self.recognitionDock = Recognition(getStr('recognitionProperties'), True, ['C:/venv/models/research/object_detection/faster_rcnn_inception_v2_excavator_2/frozen_inference_graph.pb'], self)
         self.recognitionDock = Recognition(getStr('recognitionProperties'), self.settings.get(SETTING_AUTO_DETECTION), self)
+        self.recognitionDock.objects_detected.connect(self.onObjectsDetected)
 
         self.zoomWidget = ZoomWidget()
         self.colorDialog = ColorDialog(parent=self)
@@ -607,6 +609,10 @@ class MainWindow(QMainWindow, WindowMixin):
             return ['open']
 
     ## Callbacks ##
+    def onObjectsDetected(self, detection_result):
+        if detection_result[0] == self.filePath:
+            self.canvas.loadDetectedShapes(detection_result[1])
+
     def showTutorialDialog(self):
         subprocess.Popen(self.screencastViewer + [self.screencast])
 
@@ -1018,6 +1024,7 @@ class MainWindow(QMainWindow, WindowMixin):
             self.canvas.loadPixmap(QPixmap.fromImage(image))
             if self.labelFile:
                 self.loadLabels(self.labelFile.shapes)
+
             self.setClean()
             self.canvas.setEnabled(True)
             self.adjustScale(initial=True)
