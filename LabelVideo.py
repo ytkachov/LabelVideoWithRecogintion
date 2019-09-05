@@ -109,6 +109,8 @@ class MainWindow(QMainWindow, WindowMixin):
 
         self.itemsToShapes = {}
         self.shapesToItems = {}
+        self.itemsToDetectedShapes = {}
+        self.detectedShapesToItems = {}
         self.prevLabelText = ''
 
         listLayout = QVBoxLayout()
@@ -132,20 +134,37 @@ class MainWindow(QMainWindow, WindowMixin):
         self.editButton.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
 
         # Add some of widgets to listLayout
-        listLayout.addWidget(self.editButton)
-        listLayout.addWidget(self.diffcButton)
-        listLayout.addWidget(useDefaultLabelContainer)
+        #listLayout.addWidget(self.editButton)
+        #listLayout.addWidget(self.diffcButton)
+        #listLayout.addWidget(useDefaultLabelContainer)
+
+        l1 = QLabel()
+        l1.setText('Labels')
+        listLayout.addWidget(l1)
 
         # Create and add a widget for showing current label items
         self.labelList = QListWidget()
-        labelListContainer = QWidget()
-        labelListContainer.setLayout(listLayout)
         self.labelList.itemActivated.connect(self.labelSelectionChanged)
         self.labelList.itemSelectionChanged.connect(self.labelSelectionChanged)
         self.labelList.itemDoubleClicked.connect(self.editLabel)
+
         # Connect to itemChanged to detect checkbox changes.
         self.labelList.itemChanged.connect(self.labelItemChanged)
         listLayout.addWidget(self.labelList)
+
+        l2 = QLabel()
+        l2.setText('Detected Labels')
+        listLayout.addWidget(l2)
+
+        self.detectedLabelList = QListWidget()
+        # self.detectedlabelList.itemDoubleClicked.connect(self.editLabel)
+        #self.detectedlabelList.itemSelectionChanged.connect(self.labelSelectionChanged)
+        #self.detectedlabelList.itemActivated.connect(self.labelSelectionChanged)
+        #self.detectedlabelList.itemChanged.connect(self.labelItemChanged)
+        listLayout.addWidget(self.detectedLabelList)
+
+        labelListContainer = QWidget()
+        labelListContainer.setLayout(listLayout)
 
         self.dock = QDockWidget(getStr('boxLabelText'), self)
         self.dock.setObjectName(getStr('labels'))
@@ -163,7 +182,6 @@ class MainWindow(QMainWindow, WindowMixin):
         self.filedock.setWidget(fileListContainer)
 
         # create auto-recognition properties widget
-        #self.recognitionDock = Recognition(getStr('recognitionProperties'), True, ['C:/venv/models/research/object_detection/faster_rcnn_inception_v2_excavator_2/frozen_inference_graph.pb'], self)
         self.recognitionDock = Recognition(getStr('recognitionProperties'), self.settings.get(SETTING_AUTO_DETECTION), self)
         self.recognitionDock.objects_detected.connect(self.onObjectsDetected)
 
@@ -328,23 +346,21 @@ class MainWindow(QMainWindow, WindowMixin):
         self.drawSquaresOption.triggered.connect(self.toogleDrawSquare)
 
         # Store actions for further handling.
-        self.actions = struct(save=save, save_format=save_format, saveAs=saveAs, open=open, close=close, resetAll = resetAll,
-                              lineColor=color1, create=create, delete=delete, edit=edit, copy=copy,
-                              createMode=createMode, editMode=editMode, advancedMode=advancedMode,
-                              shapeLineColor=shapeLineColor, shapeFillColor=shapeFillColor,
+        self.actions = struct(save=save, save_format=save_format, saveAs=saveAs, open=open, close=close,
+                              resetAll = resetAll, lineColor=color1, create=create, delete=delete,
+                              edit=edit, copy=copy, createMode=createMode, editMode=editMode,
+                              advancedMode=advancedMode, shapeLineColor=shapeLineColor,
+                              shapeFillColor=shapeFillColor,
                               zoom=zoom, zoomIn=zoomIn, zoomOut=zoomOut, zoomOrg=zoomOrg,
                               fitWindow=fitWindow, fitWidth=fitWidth,
                               zoomActions=zoomActions,
-                              fileMenuActions=(
-                                  open, opendir, save, saveAs, close, resetAll, quit),
-                              beginner=(), advanced=(),
-                              editMenu=(edit, copy, delete,
-                                        None, color1, self.drawSquaresOption),
+                              fileMenuActions=(open, opendir, save, saveAs, close, resetAll, quit),
+                              beginner=(),
+                              advanced=(),
+                              editMenu=(edit, copy, delete, None, color1, self.drawSquaresOption),
                               beginnerContext=(create, edit, copy, delete),
-                              advancedContext=(createMode, editMode, edit, copy,
-                                               delete, shapeLineColor, shapeFillColor),
-                              onLoadActive=(
-                                  close, create, createMode, editMode),
+                              advancedContext=(createMode, editMode, edit, copy, delete, shapeLineColor, shapeFillColor),
+                              onLoadActive=(close, create, createMode, editMode),
                               onShapesPresent=(saveAs, hideAll, showAll))
 
         self.menus = struct(
@@ -573,6 +589,9 @@ class MainWindow(QMainWindow, WindowMixin):
         self.itemsToShapes.clear()
         self.shapesToItems.clear()
         self.labelList.clear()
+        self.itemsToDetectedShapes.clear()
+        self.detectedShapesToItems.clear()
+        self.detectedLabelList.clear()
         self.filePath = None
         self.imageData = None
         self.labelFile = None
@@ -612,6 +631,8 @@ class MainWindow(QMainWindow, WindowMixin):
     def onObjectsDetected(self, detection_result):
         if detection_result[0] == self.filePath:
             self.canvas.loadDetectedShapes(detection_result[1])
+            for detectedShape in detection_result[1]:
+                self.addDetectedLabel(detectedShape)
 
     def showTutorialDialog(self):
         subprocess.Popen(self.screencastViewer + [self.screencast])
@@ -742,6 +763,16 @@ class MainWindow(QMainWindow, WindowMixin):
         self.labelList.addItem(item)
         for action in self.actions.onShapesPresent:
             action.setEnabled(True)
+
+    def addDetectedLabel(self, detectedShape):
+        item = HashableQListWidgetItem(detectedShape.label)
+        item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+        item.setCheckState(Qt.Checked)
+        self.itemsToDetectedShapes[item] = detectedShape
+        self.detectedShapesToItems[detectedShape] = item
+        self.detectedLabelList.addItem(item)
+        #for action in self.actions.onShapesPresent:
+        #    action.setEnabled(True)
 
     def remLabel(self, shape):
         if shape is None:

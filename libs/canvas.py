@@ -448,7 +448,7 @@ class Canvas(QWidget):
 
         p.drawPixmap(0, 0, self.pixmap)
 
-        for dshape in self.detectedShapes:
+        for dshape in self.detectedShapes[::-1]:
             dshape.paint(p)
 
         Shape.scale = self.scale
