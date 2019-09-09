@@ -25,7 +25,7 @@ CURSOR_GRAB = Qt.OpenHandCursor
 class Canvas(QWidget):
     zoomRequest = pyqtSignal(int)
     scrollRequest = pyqtSignal(int, int)
-    newShape = pyqtSignal()
+    newShape = pyqtSignal(object)
     selectionChanged = pyqtSignal(bool)
     shapeMoved = pyqtSignal()
     drawingPolygon = pyqtSignal(bool)
@@ -42,6 +42,7 @@ class Canvas(QWidget):
         self.detectedShapes = []
         self.current = None
         self.selectedShape = None  # save the selected shape here
+        self.selectedDetectedShape = None
         self.selectedShapeCopy = None
         self.drawingLineColor = QColor(0, 0, 255)
         self.drawingRectColor = QColor(0, 0, 255)
@@ -306,6 +307,13 @@ class Canvas(QWidget):
         self.selectionChanged.emit(True)
         self.update()
 
+    def selectDetectedShape(self, shape):
+        self.deSelectDetectedShape()
+        shape.selected = True
+        self.selectedDetectedShape = shape
+        self.setHiding()
+        self.update()
+
     def selectShapePoint(self, point):
         """Select the first shape created which contains this point."""
         self.deSelectShape()
@@ -401,6 +409,14 @@ class Canvas(QWidget):
         if self.selectedShape:
             self.selectedShape.selected = False
             self.selectedShape = None
+            self.setHiding(False)
+            self.selectionChanged.emit(False)
+            self.update()
+
+    def deSelectDetectedShape(self):
+        if self.selectedDetectedShape:
+            self.selectedDetectedShape.selected = False
+            self.selectedDetectedShape = None
             self.setHiding(False)
             self.selectionChanged.emit(False)
             self.update()
@@ -520,7 +536,8 @@ class Canvas(QWidget):
         self.shapes.append(self.current)
         self.current = None
         self.setHiding(False)
-        self.newShape.emit()
+        self.newShape.emit(self.shapes[-1])
+
         self.update()
 
     def closeEnough(self, p1, p2):
@@ -664,17 +681,6 @@ class Canvas(QWidget):
         points = [p1+p2 for p1, p2 in zip(self.selectedShape.points, [step]*4)]
         return True in map(self.outOfPixmap, points)
 
-    def setLastLabel(self, text, line_color  = None, fill_color = None):
-        assert text
-        self.shapes[-1].label = text
-        if line_color:
-            self.shapes[-1].line_color = line_color
-
-        if fill_color:
-            self.shapes[-1].fill_color = fill_color
-
-        return self.shapes[-1]
-
     def undoLastLine(self):
         assert self.shapes
         self.current = self.shapes.pop()
@@ -703,12 +709,21 @@ class Canvas(QWidget):
         self.current = None
         self.repaint()
 
+    def addShape(self, shape):
+        self.shapes.append(shape)
+        self.current = None
+        self.repaint()
+
     def loadDetectedShapes(self, dshapes):
         self.detectedShapes = list(dshapes)
         self.repaint()
 
     def setShapeVisible(self, shape, value):
         self.visible[shape] = value
+        self.repaint()
+
+    def setDetectedShapeVisible(self, shape, value):
+        shape.visible = value
         self.repaint()
 
     def currentCursor(self):

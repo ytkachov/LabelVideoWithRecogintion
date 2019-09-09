@@ -38,9 +38,12 @@ class Shape(object):
     point_size = 8
     scale = 1.0
 
-    def __init__(self, label=None, line_color=None, difficult=False, paintLabel=False):
+    def __init__(self, label=None, line_color=None, difficult=False, paintLabel=False, points=None):
         self.label = label
         self.points = []
+        if points is not None:
+            self.points = points
+
         self.fill = False
         self.selected = False
         self.difficult = difficult
@@ -68,6 +71,20 @@ class Shape(object):
         if len(self.points) >= 4:
             return True
         return False
+
+    def getExtent(self):
+        min_x = 100000.0
+        min_y = 100000.0
+        max_x = -100000.0
+        max_y = -100000.0
+
+        for point in self.points:
+            min_x = min(min_x, point.x())
+            min_y = min(min_y, point.y())
+            max_x = max(max_x, point.x())
+            max_y = max(max_y, point.y())
+
+        return (min_x, min_y, max_x, max_y)
 
     def addPoint(self, point):
         if not self.reachMaxPoints():

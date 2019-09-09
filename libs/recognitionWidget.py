@@ -19,7 +19,6 @@ class Recognition(QDockWidget):
 
     def __init__(self, Title, Settings, ParentWindow):
         super(Recognition, self).__init__(None, ParentWindow)
-        #f lg = self.WindowFlags()
         self.setWindowFlags(Qt.FramelessWindowHint)
 
         settings = {RUN_DETECTION: True, MODEL_LIST: [], CURRENT_MODEL_NAME: ''}

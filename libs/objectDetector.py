@@ -104,11 +104,11 @@ class ObjectDetector:
             while output_dict["detection_scores"][i] > 0.1:
                 d_class = output_dict["detection_classes"][i]
                 d_label = self.category_index[d_class]['name']
-
                 d_score = output_dict["detection_scores"][i]
+
                 (ymin, xmin, ymax, xmax) = output_dict["detection_boxes"][i]
                 d_extent = (int(xmin * width) , int(ymin * height), int(xmax * width), int(ymax * height))
-                dshapes.append(DetectedShape(str.format('{1}: {0}', d_label, d_class), d_score, d_extent))
+                dshapes.append(DetectedShape(d_label, d_class, d_score, d_extent))
                 i += 1
 
             return dshapes
