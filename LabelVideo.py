@@ -44,8 +44,9 @@ from libs.ustr import ustr
 from libs.hashableQListWidgetItem import HashableQListWidgetItem
 from libs.recognitionWidget import *
 from libs.detectedShape import *
+from libs.labelMap import *
 
-__appname__ = 'labelImg'
+__appname__ = 'LabelVideo'
 
 class WindowMixin(object):
 
@@ -69,7 +70,7 @@ class WindowMixin(object):
 class MainWindow(QMainWindow, WindowMixin):
     FIT_WINDOW, FIT_WIDTH, MANUAL_ZOOM = list(range(3))
 
-    def __init__(self, defaultFilename=None, defaultPrefdefClassFile=None, defaultSaveDir=None):
+    def __init__(self, defaultFilename=None, defaultPredefClassFile=None, defaultSaveDir=None):
         super(MainWindow, self).__init__()
         self.setWindowTitle(__appname__)
 
@@ -90,7 +91,11 @@ class MainWindow(QMainWindow, WindowMixin):
         # For loading all image under a directory
         self.mImgList = []
         self.dirname = None
-        self.labelHist = []
+        ps = ProgramState.getInstance()
+        ps.labelMapPath = settings.get(SETTING_LABELMAP_FILENAME, defaultPredefClassFile)
+        self.labelMap = LabelMap(ps.labelMapPath)
+        ps.signals.labelMapPathChanged.connect(self.onLabelMapPathChanged)
+
         self.lastOpenDir = None
 
         # Whether we need to save or not.
@@ -102,10 +107,9 @@ class MainWindow(QMainWindow, WindowMixin):
         self.screencast = "https://youtu.be/p0nR2YsCY_U"
 
         # Load predefined classes to the list
-        self.loadPredefinedClasses(defaultPrefdefClassFile)
 
         # Main widgets and related state.
-        self.labelDialog = LabelDialog(parent=self, listItem=self.labelHist)
+        self.labelDialog = LabelDialog(parent=self, listItem=self.labelMap.getLabels())
 
         self.itemsToShapes = {}
         self.shapesToItems = {}
@@ -199,8 +203,8 @@ class MainWindow(QMainWindow, WindowMixin):
         quit = action(getStr('quit'), self.close,
                       'Ctrl+Q', 'quit', getStr('quitApp'))
 
-        open = action(getStr('openFile'), self.openFile,
-                      'Ctrl+O', 'open', getStr('openFileDetail'))
+        openLabelMap = action(getStr('openLabelFile'), self.openLabelMapFile,
+                      'Ctrl+O', 'open', getStr('openLabelFileDetail'))
 
         opendir = action(getStr('openDir'), self.openDirDialog,
                          'Ctrl+u', 'open', getStr('openDir'))
@@ -238,7 +242,7 @@ class MainWindow(QMainWindow, WindowMixin):
 
         createMode = action(getStr('crtBox'), self.setCreateMode,
                             'w', 'new', getStr('crtBoxDetail'), enabled=False)
-        editMode = action('&Edit\nRectBox', self.setEditMode,
+        editMode = action('&Edit RectBox', self.setEditMode,
                           'Ctrl+J', 'edit', u'Move and edit Boxs', enabled=False)
 
         create = action(getStr('crtBox'), self.createShape,
@@ -253,10 +257,10 @@ class MainWindow(QMainWindow, WindowMixin):
                               'Ctrl+Shift+A', 'expert', getStr('advancedModeDetail'),
                               checkable=True)
 
-        hideAll = action('&Hide\nRectBox', partial(self.togglePolygons, False),
+        hideAll = action('&Hide RectBox', partial(self.togglePolygons, False),
                          'Ctrl+H', 'hide', getStr('hideAllBoxDetail'),
                          enabled=False)
-        showAll = action('&Show\nRectBox', partial(self.togglePolygons, True),
+        showAll = action('&Show RectBox', partial(self.togglePolygons, True),
                          'Ctrl+A', 'hide', getStr('showAllBoxDetail'),
                          enabled=False)
 
@@ -331,7 +335,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.detectedLabelList.customContextMenuRequested.connect(self.popDetectedLabelListMenu)
 
         # Store actions for further handling.
-        self.actions = struct(save=save, save_format=save_format, saveAs=saveAs, open=open, close=close,
+        self.actions = struct(save=save, save_format=save_format, saveAs=saveAs, open=openLabelMap, close=close,
                               resetAll = resetAll, lineColor=color1, create=create, delete=delete,
                               edit=edit, copy=copy, createMode=createMode, editMode=editMode,
                               advancedMode=advancedMode, shapeLineColor=shapeLineColor,
@@ -339,7 +343,7 @@ class MainWindow(QMainWindow, WindowMixin):
                               zoom=zoom, zoomIn=zoomIn, zoomOut=zoomOut, zoomOrg=zoomOrg,
                               fitWindow=fitWindow, fitWidth=fitWidth,
                               zoomActions=zoomActions,
-                              fileMenuActions=(open, opendir, save, saveAs, close, resetAll, quit),
+                              fileMenuActions=(openLabelMap, opendir, save, saveAs, close, resetAll, quit),
                               beginner=(),
                               advanced=(),
                               editMenu=(edit, copy, delete, None, color1),
@@ -380,7 +384,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.autoRestore.setChecked(settings.get(SETTING_RESTORE_ON_START, True))
 
         addActions(self.menus.file,
-                   (open, opendir, changeSavedir, self.autoRestore, openAnnotation, self.menus.recentFiles, save, save_format, saveAs, close, resetAll, quit))
+                   (openLabelMap, opendir, changeSavedir, self.autoRestore, openAnnotation, self.menus.recentFiles, save, save_format, saveAs, close, resetAll, quit))
         addActions(self.menus.help, (help, showInfo))
         addActions(self.menus.view, (
             self.autoSaving,
@@ -401,11 +405,11 @@ class MainWindow(QMainWindow, WindowMixin):
 
         self.tools = self.toolbar('Tools')
         self.actions.beginner = (
-            open, opendir, changeSavedir, openNextImg, openPrevImg, verify, save, save_format, None, create, copy, delete, None,
+            openLabelMap, opendir, changeSavedir, openNextImg, openPrevImg, verify, save, save_format, None, create, copy, delete, None,
             zoomIn, zoom, zoomOut, fitWindow, fitWidth)
 
         self.actions.advanced = (
-            open, opendir, changeSavedir, openNextImg, openPrevImg, save, save_format, None,
+            openLabelMap, opendir, changeSavedir, openNextImg, openPrevImg, save, save_format, None,
             createMode, editMode, None,
             hideAll, showAll)
 
@@ -873,8 +877,8 @@ class MainWindow(QMainWindow, WindowMixin):
             elif self.usingYoloFormat is True:
                 if annotationFilePath[-4:].lower() != ".txt":
                     annotationFilePath += TXT_EXT
-                self.labelFile.saveYoloFormat(annotationFilePath, shapes, self.filePath, self.imageData, self.labelHist,
-                                                   self.lineColor.getRgb(), self.fillColor.getRgb())
+                self.labelFile.saveYoloFormat(annotationFilePath, shapes, self.filePath, self.imageData, self.labelMap.getLabels(),
+                                              self.lineColor.getRgb(), self.fillColor.getRgb())
             else:
                 self.labelFile.save(annotationFilePath, shapes, self.filePath, self.imageData,
                                     self.lineColor.getRgb(), self.fillColor.getRgb())
@@ -894,6 +898,10 @@ class MainWindow(QMainWindow, WindowMixin):
         if item and self.canvas.editing():
             self._noSelectionSlot = True
             self.canvas.selectDetectedShape(self.itemsToDetectedShapes[item])
+
+    def onLabelMapPathChanged(self, label_map_path):
+        self.labelMap = LabelMap(label_map_path)
+        self.labelDialog = LabelDialog(parent=self, listItem=self.labelMap.getLabels())
 
     def detectedLabelItemChanged(self, item):
         shape = self.itemsToDetectedShapes[item]
@@ -969,8 +977,8 @@ class MainWindow(QMainWindow, WindowMixin):
         position MUST be in global coordinates.
         """
 
-        if len(self.labelHist) > 0:
-            self.labelDialog = LabelDialog(parent=self, listItem=self.labelHist)
+        if len(self.labelMap.getLabels()) > 0:
+            self.labelDialog = LabelDialog(parent=self, listItem=self.labelMap.getLabels())
 
         # Sync single class mode from PR#106
         if self.singleClassMode.isChecked() and self.lastLabel:
@@ -1219,6 +1227,7 @@ class MainWindow(QMainWindow, WindowMixin):
             event.ignore()
         settings = self.settings
 
+        settings[SETTING_LABELMAP_FILENAME] = ProgramState.getInstance().labelMapPath
         settings[SETTING_FILENAME] = self.filePath if self.filePath else ''
         settings[SETTING_WIN_SIZE] = self.size()
         settings[SETTING_WIN_POSE] = self.pos()
@@ -1393,17 +1402,19 @@ class MainWindow(QMainWindow, WindowMixin):
         if filename:
             self.loadFile(filename)
 
-    def openFile(self, _value=False):
-        if not self.mayContinue():
-            return
+    def openLabelMapFile(self, _value=False):
         path = os.path.dirname(ustr(self.filePath)) if self.filePath else '.'
-        formats = ['*.%s' % fmt.data().decode("ascii").lower() for fmt in QImageReader.supportedImageFormats()]
-        filters = "Image & Label files (%s)" % ' '.join(formats + ['*%s' % LabelFile.suffix])
-        filename = QFileDialog.getOpenFileName(self, '%s - Choose Image or Label file' % __appname__, path, filters)
+        filters = "TensorFlow Label Map files (*.pbtxt)"
+
+        dlg = QFileDialog(self, '%s - Choose Label file' % __appname__, path, filters)
+        dlg.setAcceptMode(QFileDialog.AcceptOpen)
+        dlg.setOption(QFileDialog.DontUseNativeDialog, False)
+        if dlg.exec_():
+            filename = ustr(dlg.selectedFiles()[0])
+
         if filename:
-            if isinstance(filename, (tuple, list)):
-                filename = filename[0]
-            self.loadFile(filename)
+            ProgramState.getInstance().labelMapPath = filename
+
 
     def saveFile(self, _value=False):
         if self.defaultSaveDir is not None and len(ustr(self.defaultSaveDir)):
@@ -1417,8 +1428,7 @@ class MainWindow(QMainWindow, WindowMixin):
             imgFileName = os.path.basename(self.filePath)
             savedFileName = os.path.splitext(imgFileName)[0]
             savedPath = os.path.join(imgFileDir, savedFileName)
-            self._saveFile(savedPath if self.labelFile
-                           else self.saveFileDialog(removeExt=False))
+            self._saveFile(savedPath if self.labelFile else self.saveFileDialog(removeExt=False))
 
     def saveFileAs(self, _value=False):
         assert not self.image.isNull(), "cannot save empty image"
@@ -1520,16 +1530,6 @@ class MainWindow(QMainWindow, WindowMixin):
         self.canvas.endMove(copy=False)
         self.setDirty()
 
-    def loadPredefinedClasses(self, predefClassesFile):
-        if os.path.exists(predefClassesFile) is True:
-            with codecs.open(predefClassesFile, 'r', 'utf8') as f:
-                for line in f:
-                    line = line.strip()
-                    if self.labelHist is None:
-                        self.labelHist = [line]
-                    else:
-                        self.labelHist.append(line)
-
     def loadPascalXMLByFilename(self, xmlPath):
         if self.filePath is None:
             return
@@ -1578,14 +1578,15 @@ def get_main_app(argv=[]):
     Do everything but app.exec_() -- so that we can test the application in one thread
     """
     app = QApplication(argv)
+    styles = QStyleFactory.keys()
     app.setApplicationName(__appname__)
     app.setWindowIcon(newIcon("app"))
+    app.setStyle('Fusion')
+
     # Tzutalin 201705+: Accept extra agruments to change predefined class file
     # Usage : LabelVideo.py image predefClassFile saveDir
     win = MainWindow(argv[1] if len(argv) >= 2 else None,
-                     argv[2] if len(argv) >= 3 else os.path.join(
-                         os.path.dirname(sys.argv[0]),
-                         'data', 'predefined_classes.txt'),
+                     argv[2] if len(argv) >= 3 else os.path.join(os.path.dirname(sys.argv[0]), 'data', 'labelmap.pbtxt'),
                      argv[3] if len(argv) >= 4 else None)
     win.show()
     return app, win

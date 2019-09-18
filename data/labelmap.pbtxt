@@ -1,0 +1,36 @@
+item {
+    id: 1
+    name: 'close'
+}
+item {
+    id: 2
+    name: 'opening_10'
+}
+item {
+    id: 3
+    name: 'opening_50'
+}
+item {
+    id: 4
+    name: 'opening_80'
+}
+item {
+    id: 5
+    name: 'opening_100'
+}
+item {
+    id: 6
+    name: 'open'
+}
+item {
+    id: 7
+    name: 'bunker'
+}
+item {
+    id: 8
+    name: 'arm'
+}
+item {
+    id: 9
+    name: 'garbage'
+}

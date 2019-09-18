@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import *
 from libs.threading import *
 from libs.objectDetector import *
 from libs.detectedShape import *
+from libs.trainingData import *
 import time
 import pickle
 
@@ -29,6 +30,9 @@ class Recognition(QDockWidget):
 
         self._objectDetectors = {}
         self._currentObjectDetector = None
+
+        self._detectionQueue = []
+        self._detectionInProgress = False
 
         self._runDetection = settings.get(RUN_DETECTION, False)
         self._modelList = settings.get(MODEL_LIST, [])
@@ -63,10 +67,14 @@ class Recognition(QDockWidget):
 
         self._detectionModelsCombobox.setVisible(self._runDetection)
 
+        self._exportTrainingDataButton = QPushButton("Prepare training data")
+        self._exportTrainingDataButton.clicked.connect(self._prepare_training_data)
+
         detectionLayout = QHBoxLayout()
         detectionLayout.addWidget(self._runDetectionCheckbox)
         detectionLayout.addWidget(self._detectionModelsCombobox)
         detectionLayout.addStretch()
+        detectionLayout.addWidget(self._exportTrainingDataButton)
 
         detectionContainer = QWidget()
         detectionContainer.setLayout(detectionLayout)
@@ -81,22 +89,40 @@ class Recognition(QDockWidget):
         return pickle.dumps(settings)
 
     def ProcessImage(self, imgname):
-        self.currentImageName = imgname
-        #  run detection in separate thread
-        worker = Worker(self._detect_objects, self.currentImageName)  # Any other args, kwargs are passed to the run function
-        worker.signals.result.connect(self._on_detection_result)
-        worker.signals.error.connect(self._on_detection_error)
-        worker.signals.finished.connect(self._on_detection_finished)
-
-        # Execute
-        self._threadPool.start(worker)
+        self._detectionQueue.append(imgname)
+        self._process_detection_queue()
 
     # signals
     objects_detected = pyqtSignal(tuple)
 
     # private methods
+    def _prepare_training_data(self):
+        td = TrainingData()
+        td.exportData(label_path, data_path, labelmap)
+
+    def _process_detection_queue(self):
+        if self._detectionInProgress or self._currentObjectDetector is None:
+            return
+
+        if  len(self._detectionQueue) != 0:
+            self._detectionInProgress = True
+            imageName = self._detectionQueue[0]
+            self._detectionQueue = self._detectionQueue[1:]
+
+            #  run detection in separate thread
+            worker = Worker(self._detect_objects, imageName)  # Any other args, kwargs are passed to the run function
+            worker.signals.result.connect(self._on_detection_result)
+            worker.signals.error.connect(self._on_detection_error)
+            worker.signals.finished.connect(self._on_detection_finished)
+
+            # Execute
+            self._threadPool.start(worker)
+
+
     def _detect_objects(self, image_path):
-        return (image_path, self._currentObjectDetector.Detect(image_path))
+        self._detectionModelsCombobox.setEnabled(False)
+        self._runDetectionCheckbox.setEnabled(False)
+        return (image_path, self._currentObjectDetector.detect(image_path))
 
     def _on_detection_result(self, detection_result):
         self.objects_detected.emit(detection_result)
@@ -107,23 +133,38 @@ class Recognition(QDockWidget):
     def _on_detection_finished(self):
         self._detectionModelsCombobox.setEnabled(True)
         self._runDetectionCheckbox.setEnabled(True)
+        self._detectionInProgress = False
+        self._process_detection_queue()
 
     def _run_detection_changed(self, item= None):
         self._runDetection = self._runDetectionCheckbox.isChecked()
         self._detectionModelsCombobox.setVisible(self._runDetection)
 
     def _load_model(self, modelName):
-        od = ObjectDetector(modelName, r'C:\venv\models\research\object_detection\faster_rcnn_inception_v2_excavator_1\excavator_labelmap.pbtxt')
+        od = ObjectDetector(modelName)
         return od
 
     def _on_loading_result(self, objectDetector):
         if objectDetector != None:
             self._objectDetectors[self._currentModelName] = objectDetector
             self._currentObjectDetector = objectDetector
+            # check if label maps are equivalent
+            path_to_labels = ProgramState.getInstance().labelMapPath
+            detector_label_map = objectDetector.getLabelMap()
+            if  not detector_label_map.IsEqual(LabelMap(path_to_labels)):
+                emsg = QMessageBox(self)
+                emsg.setIcon(QMessageBox.Warning)
+                emsg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+                emsg.setText('Inconcistent Label Maps')
+                emsg.setInformativeText("Application's Label Map is not equal to Object Detector's Label Map. Do you want to change application Label Map?")
+                emsg.setWindowTitle("ObjectDetector")
+                response = emsg.exec_()
+
 
     def _on_loading_finished(self):
         self._detectionModelsCombobox.setEnabled(True)
         self._runDetectionCheckbox.setEnabled(True)
+        self._process_detection_queue()
 
     def _on_loading_error(self, restuple):
         str = restuple[2]

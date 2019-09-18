@@ -1,9 +1,0 @@
-close
-opening_10
-opening_50
-opening_80
-opening_100
-open
-bunker
-arm
-garbage

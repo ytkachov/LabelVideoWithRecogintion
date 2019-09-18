@@ -1,5 +1,6 @@
 SETTING_RESTORE_ON_START = 'restoreOnStart'
 SETTING_FILENAME = 'filename'
+SETTING_LABELMAP_FILENAME = 'labelMapFileName'
 SETTING_SAVE_DIR = 'savedir'
 SETTING_LAST_OPEN_DIR = 'lastOpenDir'
 SETTING_RECENT_FILES = 'recentFiles'
