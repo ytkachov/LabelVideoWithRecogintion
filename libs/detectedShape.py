@@ -25,6 +25,7 @@ class DetectedShape(object):
         self.selected = False
         self.visible = True
         self.fclass = fclass
+        self.garbaged = False
 
     def paint(self, painter):
         if self.extent and self.visible:

@@ -40,5 +40,11 @@ class LabelMap:
 
         else: return 0
 
+    def getClassNumber(self):
+        if self._category_index:
+            return len(self._category_index.items())
+
+        else: return 0
+
     def IsEqual(self, other) -> bool:
-        return False
+        return True

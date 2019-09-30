@@ -84,17 +84,18 @@ class MainWindow(QMainWindow, WindowMixin):
         getStr = lambda strId: self.stringBundle.getString(strId)
 
         # Save as Pascal voc xml
-        self.defaultSaveDir = defaultSaveDir
+        program_state = ProgramState.getInstance()
+        program_state.defaultSaveDir = defaultSaveDir
+
         self.usingPascalVocFormat = True
         self.usingYoloFormat = False
 
         # For loading all image under a directory
         self.mImgList = []
         self.dirname = None
-        ps = ProgramState.getInstance()
-        ps.labelMapPath = settings.get(SETTING_LABELMAP_FILENAME, defaultPredefClassFile)
-        self.labelMap = LabelMap(ps.labelMapPath)
-        ps.signals.labelMapPathChanged.connect(self.onLabelMapPathChanged)
+        program_state.labelMapPath = settings.get(SETTING_LABELMAP_FILENAME, defaultPredefClassFile)
+        self.labelMap = LabelMap(program_state.labelMapPath)
+        program_state.signals.labelMapPathChanged.connect(self.onLabelMapPathChanged)
 
         self.lastOpenDir = None
 
@@ -135,14 +136,38 @@ class MainWindow(QMainWindow, WindowMixin):
         listLayout.addWidget(self.labelList)
 
         l2 = QLabel()
-        l2.setText('Detected Labels')
-        listLayout.addWidget(l2)
+        l2.setText('Detected:')
+
+        convert_all_button = QPushButton('All')
+        width = convert_all_button.fontMetrics().boundingRect("All").width() + 12
+        convert_all_button.setMaximumWidth(width)
+        convert_all_button.clicked.connect(partial(self._create_shape_from_detected_shape, label = None,
+                                                   enquireType = False, allLabels = True))
+
+        convert_all_but_current_button = QPushButton('All but current')
+        width = convert_all_but_current_button.fontMetrics().boundingRect("All but current").width() + 12
+        convert_all_but_current_button.setMaximumWidth(width)
+        convert_all_but_current_button.clicked.connect(partial(self._create_shape_from_detected_shape, label = None,
+                                                       enquireType = True, allLabels = True))
+
+
+        detected_labels_layout = QHBoxLayout()
+        detected_labels_layout.setContentsMargins(0, 0, 10, 0)
+        detected_labels_layout.addWidget(l2)
+        detected_labels_layout.addWidget(convert_all_button)
+        detected_labels_layout.addWidget(convert_all_but_current_button)
+        detected_labels_widget = QWidget()
+        detected_labels_widget.setLayout(detected_labels_layout)
+
+
+        listLayout.addWidget(detected_labels_widget)
 
         self.detectedLabelList = QListWidget()
 
         self.detectedLabelList.itemSelectionChanged.connect(self.detectedLabelSelectionChanged)
         self.detectedLabelList.itemActivated.connect(self.detectedLabelSelectionChanged)
-        self.detectedLabelList.itemDoubleClicked.connect(partial(self.createShapeFromDetectedShape, label = None, enquireType = False))
+        self.detectedLabelList.itemDoubleClicked.connect(partial(self._create_shape_from_detected_shape,
+                                                                 label = None, enquireType = False, allLabels = False))
         self.detectedLabelList.itemChanged.connect(self.detectedLabelItemChanged)
 
         listLayout.addWidget(self.detectedLabelList)
@@ -307,16 +332,30 @@ class MainWindow(QMainWindow, WindowMixin):
                                 icon='color', tip=getStr('shapeFillColorDetail'),
                                 enabled=False)
 
-        createSameLabel = action('Convert to same label',
-                                 partial(self.createShapeFromDetectedShape, label = None, enquireType = False), 'Ctrl+L', 'create',
-                                 'Create label of the same type', enabled=True)
+        create_same_label = action('Convert to same label',
+                                   partial(self._create_shape_from_detected_shape, label = None,
+                                           enquireType = False, allLabels = False), 'Ctrl+L', 'create',
+                                   'Create label of the same type', enabled=True)
 
-        createGarbageLabel = action('Convert to garbage label',
-                                    partial(self.createShapeFromDetectedShape, label = 'garbage', enquireType = False), 'Ctrl+G', 'create',
-                                    'Create label of the garbage_bag type', enabled=True)
+        create_all_same_labels = action('Convert all detected labels',
+                                        partial(self._create_shape_from_detected_shape, label = None,
+                                                enquireType = False, allLabels = True), '', 'create',
+                                        'Create all labels of the same type', enabled=True)
 
-        createLabelOfType = action('Convert to label of type...', partial(self.createShapeFromDetectedShape, label = None, enquireType = True), 'Ctrl+T', 'create',
-                                   'Specify type for new label', enabled=True)
+        create_all_labels_but_current = action('Convert all but current detected labels',
+                                        partial(self._create_shape_from_detected_shape, label = None,
+                                                enquireType = True, allLabels = True), '', 'create',
+                                        'Create all labels of the same type', enabled=True)
+
+        create_garbage_label = action('Convert to garbage label',
+                                      partial(self._create_shape_from_detected_shape, label ='garbage',
+                                              enquireType = False, allLabels = False), 'Ctrl+G', 'create',
+                                      'Create label of the garbage_bag type', enabled=True)
+
+        create_label_of_type = action('Convert to label of type...',
+                                      partial(self._create_shape_from_detected_shape, label = None,
+                                              enquireType = True, allLabels = False), 'Ctrl+T', 'create',
+                                     'Specify type for new label', enabled=True)
 
 
         labels = self.dock.toggleViewAction()
@@ -330,7 +369,8 @@ class MainWindow(QMainWindow, WindowMixin):
         self.labelList.customContextMenuRequested.connect(self.popLabelListMenu)
 
         detectedLabelMenu = QMenu()
-        addActions(detectedLabelMenu, (createSameLabel, createGarbageLabel, createLabelOfType))
+        addActions(detectedLabelMenu, (create_same_label, create_garbage_label, create_label_of_type,
+                                       create_all_same_labels, create_all_labels_but_current))
         self.detectedLabelList.setContextMenuPolicy(Qt.CustomContextMenu)
         self.detectedLabelList.customContextMenuRequested.connect(self.popDetectedLabelListMenu)
 
@@ -450,10 +490,10 @@ class MainWindow(QMainWindow, WindowMixin):
         self.lastOpenDir = ustr(settings.get(SETTING_LAST_OPEN_DIR, None))
         self.filePath = ustr(settings.get(SETTING_FILENAME, None))
 
-        if self.defaultSaveDir is None and saveDir is not None and os.path.exists(saveDir):
-            self.defaultSaveDir = saveDir
+        if program_state.defaultSaveDir is None and saveDir is not None and os.path.exists(saveDir):
+            program_state.defaultSaveDir = saveDir
             self.statusBar().showMessage('%s started. Annotation will be saved to %s' %
-                                         (__appname__, self.defaultSaveDir))
+                                         (__appname__, program_state.defaultSaveDir))
             self.statusBar().show()
 
         self.restoreState(settings.get(SETTING_WIN_STATE, QByteArray()))
@@ -767,14 +807,14 @@ class MainWindow(QMainWindow, WindowMixin):
             action.setEnabled(True)
 
     def addDetectedLabel(self, detectedShape):
-        lbl = str.format('{0} -- {1}', detectedShape.label, int(detectedShape.score * 100))
-        item = HashableQListWidgetItem(lbl)
+        dlbl = str.format('{0} -- {1}%', detectedShape.label, int(detectedShape.score * 100))
+        item = HashableQListWidgetItem(dlbl)
         item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
         item.setCheckState(Qt.Checked)
 
         for lbl in self.itemsToShapes.keys():
             txt = lbl.text()
-            if txt == detectedShape.label:
+            if txt == detectedShape.label or txt == 'garbage':
                 shp = self.itemsToShapes[lbl]
                 xtnt = shp.getExtent()
                 dxtnt = detectedShape.extent
@@ -784,6 +824,9 @@ class MainWindow(QMainWindow, WindowMixin):
                     fnt = QFont()
                     fnt.setBold(True)
                     item.setFont(fnt)
+                    if txt == 'garbage':
+                        item.setText(dlbl + ' : garbaged')
+                        detectedShape.garbaged = True
 
         self.itemsToDetectedShapes[item] = detectedShape
         self.detectedShapesToItems[detectedShape] = item
@@ -914,51 +957,68 @@ class MainWindow(QMainWindow, WindowMixin):
             self.canvas.selectShape(self.itemsToShapes[item])
             shape = self.itemsToShapes[item]
 
-    def createShapeFromDetectedShape(self, label = None, enquireType = False):
-        item = self.currentDetectedItem()
-        if not item:
-            return
+    def _create_shape_from_detected_shape(self, label = None, enquireType = False, allLabels = False):
+        current_item = self.currentDetectedItem()
+        items = {}
+        if allLabels:
+            # convert all labels
+            if enquireType:
+                # convert all but current
+                if not current_item:
+                    return
 
-        try:
+                for item in self.itemsToDetectedShapes.keys():
+                    if item != current_item:
+                        items[item] = self.itemsToDetectedShapes[item].label
 
-            shp = self.itemsToDetectedShapes[item]
+            else:
+                for item in self.itemsToDetectedShapes.keys():
+                    items[item] = self.itemsToDetectedShapes[item].label
+
+
+        else:
+            # convert specific label
+            if not current_item:
+                return
+
             text = label
             if label is None:
-                text = shp.label
+                text = self.itemsToDetectedShapes[current_item].label
 
             if enquireType:
                 text = self.labelDialog.popUp(text=self.prevLabelText)
                 if text is None:
                     return
 
-            xmin, ymin, xmax, ymax = shp.extent
-            points = [QPointF(xmin, ymin), QPointF(xmax, ymin), QPointF(xmax, ymax), QPointF(xmin, ymax)]
+            items[current_item] = text
 
-            newshape = Shape(label=text, points=points)
-            newshape.fill_color = generateColorByText(text)
-            newshape.line_color = newshape.fill_color
+        try:
+            for item in items.keys():
+                shp = self.itemsToDetectedShapes[item]
+                text = items[item]
 
-            item.setCheckState(Qt.Unchecked)
-            shp.visible = False
-            fnt = QFont()
-            fnt.setBold(True)
-            fnt.setItalic(True)
-            item.setFont(fnt)
+                xmin, ymin, xmax, ymax = shp.extent
+                points = [QPointF(xmin, ymin), QPointF(xmax, ymin), QPointF(xmax, ymax), QPointF(xmin, ymax)]
 
-            self.addLabel(newshape)
-            self.canvas.addShape(newshape)
-            self.setDirty()
+                newshape = Shape(label=text, points=points)
+                newshape.fill_color = generateColorByText(text)
+                newshape.line_color = newshape.fill_color
+
+                item.setCheckState(Qt.Unchecked)
+                shp.visible = False
+                fnt = QFont()
+                fnt.setBold(True)
+                fnt.setItalic(True)
+                item.setFont(fnt)
+
+                self.addLabel(newshape)
+                self.canvas.addShape(newshape)
+                self.setDirty()
         except:
             traceback.print_exc()
             exctype, value = sys.exc_info()[:2]
             fmt = traceback.format_exc()
 
-
-    def createShapeFromDetectedShapeGarbage(self):
-        pass
-
-    def createShapeFromDetectedShapeType(self):
-        pass
 
     def labelItemChanged(self, item):
         shape = self.itemsToShapes[item]
@@ -1157,11 +1217,11 @@ class MainWindow(QMainWindow, WindowMixin):
 
             # Label xml file and show bound box according to its filename
             # if self.usingPascalVocFormat is True:
-            if self.defaultSaveDir is not None:
-                basename = os.path.basename(
-                    os.path.splitext(self.filePath)[0])
-                xmlPath = os.path.join(self.defaultSaveDir, basename + XML_EXT)
-                txtPath = os.path.join(self.defaultSaveDir, basename + TXT_EXT)
+            program_state = ProgramState.getInstance()
+            if program_state.defaultSaveDir is not None:
+                basename = os.path.basename(os.path.splitext(self.filePath)[0])
+                xmlPath = os.path.join(program_state.defaultSaveDir, basename + XML_EXT)
+                txtPath = os.path.join(program_state.defaultSaveDir, basename + TXT_EXT)
 
                 """Annotation file priority:
                 PascalXML > YOLO
@@ -1236,8 +1296,9 @@ class MainWindow(QMainWindow, WindowMixin):
         settings[SETTING_FILL_COLOR] = self.fillColor
         settings[SETTING_RECENT_FILES] = self.recentFiles
         settings[SETTING_ADVANCE_MODE] = not self._beginner
-        if self.defaultSaveDir and os.path.exists(self.defaultSaveDir):
-            settings[SETTING_SAVE_DIR] = ustr(self.defaultSaveDir)
+        program_state = ProgramState.getInstance()
+        if program_state.defaultSaveDir and os.path.exists(program_state.defaultSaveDir):
+            settings[SETTING_SAVE_DIR] = ustr(program_state.defaultSaveDir)
         else:
             settings[SETTING_SAVE_DIR] = ''
 
@@ -1271,8 +1332,9 @@ class MainWindow(QMainWindow, WindowMixin):
         return images
 
     def changeSavedirDialog(self, _value=False):
-        if self.defaultSaveDir is not None:
-            path = ustr(self.defaultSaveDir)
+        program_state = ProgramState.getInstance()
+        if program_state.defaultSaveDir is not None:
+            path = ustr(program_state.defaultSaveDir)
         else:
             path = '.'
 
@@ -1281,10 +1343,10 @@ class MainWindow(QMainWindow, WindowMixin):
                                                        | QFileDialog.DontResolveSymlinks))
 
         if dirpath is not None and len(dirpath) > 1:
-            self.defaultSaveDir = dirpath
+            program_state.defaultSaveDir = dirpath
 
         self.statusBar().showMessage('%s . Annotation will be saved to %s' %
-                                     ('Change saved folder', self.defaultSaveDir))
+                                     ('Change saved folder', program_state.defaultSaveDir))
         self.statusBar().show()
 
     def openAnnotationDialog(self, _value=False):
@@ -1353,7 +1415,8 @@ class MainWindow(QMainWindow, WindowMixin):
     def openPrevImg(self, _value=False):
         # Proceding prev image without dialog if having any label
         if self.autoSaving.isChecked():
-            if self.defaultSaveDir is not None:
+            program_state = ProgramState.getInstance()
+            if program_state.defaultSaveDir is not None:
                 if self.dirty is True:
                     self.saveFile()
             else:
@@ -1378,7 +1441,8 @@ class MainWindow(QMainWindow, WindowMixin):
     def openNextImg(self, _value=False):
         # Proceding prev image without dialog if having any label
         if self.autoSaving.isChecked():
-            if self.defaultSaveDir is not None:
+            program_state = ProgramState.getInstance()
+            if program_state.defaultSaveDir is not None:
                 if self.dirty is True:
                     self.saveFile()
             else:
@@ -1417,11 +1481,12 @@ class MainWindow(QMainWindow, WindowMixin):
 
 
     def saveFile(self, _value=False):
-        if self.defaultSaveDir is not None and len(ustr(self.defaultSaveDir)):
+        program_state = ProgramState.getInstance()
+        if program_state.defaultSaveDir is not None and len(ustr(program_state.defaultSaveDir)):
             if self.filePath:
                 imgFileName = os.path.basename(self.filePath)
                 savedFileName = os.path.splitext(imgFileName)[0]
-                savedPath = os.path.join(ustr(self.defaultSaveDir), savedFileName)
+                savedPath = os.path.join(ustr(program_state.defaultSaveDir), savedFileName)
                 self._saveFile(savedPath)
         else:
             imgFileDir = os.path.dirname(self.filePath)

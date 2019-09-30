@@ -7,6 +7,7 @@ from libs.threading import *
 from libs.objectDetector import *
 from libs.detectedShape import *
 from libs.trainingData import *
+from libs.trainingSettings import *
 import time
 import pickle
 
@@ -15,6 +16,10 @@ ADD_MODEL_COMMAND = '<< Add Model >>'
 RUN_DETECTION = 'RunDetection'
 MODEL_LIST = 'ModelList'
 CURRENT_MODEL_NAME = 'CurrentModelName'
+SOURCE_MODEL_FOLDER = 'SourceModelFolder'
+TRAIN_MODEL_FOLDER = 'TrainModelFolder'
+INFERENCE_GRAPH_FOLDER = 'InferenceGraphFolder'
+
 
 class Recognition(QDockWidget):
 
@@ -37,6 +42,9 @@ class Recognition(QDockWidget):
         self._runDetection = settings.get(RUN_DETECTION, False)
         self._modelList = settings.get(MODEL_LIST, [])
         self._currentModelName = settings.get(CURRENT_MODEL_NAME, '')
+        self._source_model_folder = settings.get(SOURCE_MODEL_FOLDER)
+        self._train_model_folder = settings.get(TRAIN_MODEL_FOLDER)
+        self._inference_graph_folder = settings.get(INFERENCE_GRAPH_FOLDER)
 
         self.setFloating(False)
         self.setAllowedAreas(Qt.TopDockWidgetArea)
@@ -67,14 +75,31 @@ class Recognition(QDockWidget):
 
         self._detectionModelsCombobox.setVisible(self._runDetection)
 
-        self._exportTrainingDataButton = QPushButton("Prepare training data")
-        self._exportTrainingDataButton.clicked.connect(self._prepare_training_data)
+        self._trainingPropertiesButton = QPushButton("Set training properties")
+        self._trainingPropertiesButton.clicked.connect(self._set_training_properties)
+
+        self._exporting_data_in_progress = False
+        self._cancel_exporting = False
+        self._training_data = TrainingData()
+
+
+        self._exportTrainingDataButton = QPushButton("Export training data")
+        self._exportTrainingDataButton.clicked.connect(self._export_training_data)
+
+        self._runTrainingButton = QPushButton("Train Model")
+        self._runTrainingButton.clicked.connect(self._run_training)
+
+        self._exportInferenceGraphButton = QPushButton("Export graph")
+        self._exportInferenceGraphButton.clicked.connect(self._export_inference_graph)
 
         detectionLayout = QHBoxLayout()
         detectionLayout.addWidget(self._runDetectionCheckbox)
         detectionLayout.addWidget(self._detectionModelsCombobox)
         detectionLayout.addStretch()
+        detectionLayout.addWidget(self._trainingPropertiesButton)
         detectionLayout.addWidget(self._exportTrainingDataButton)
+        detectionLayout.addWidget(self._runTrainingButton)
+        detectionLayout.addWidget(self._exportInferenceGraphButton)
 
         detectionContainer = QWidget()
         detectionContainer.setLayout(detectionLayout)
@@ -85,7 +110,11 @@ class Recognition(QDockWidget):
 
     # Public methods
     def Settings(self):
-        settings = {RUN_DETECTION: self._runDetection, MODEL_LIST: self._modelList, CURRENT_MODEL_NAME: self._currentModelName}
+        settings = {RUN_DETECTION: self._runDetection, MODEL_LIST: self._modelList, CURRENT_MODEL_NAME: self._currentModelName,
+                    SOURCE_MODEL_FOLDER: self._source_model_folder,
+                    TRAIN_MODEL_FOLDER: self._train_model_folder,
+                    INFERENCE_GRAPH_FOLDER: self._inference_graph_folder}
+
         return pickle.dumps(settings)
 
     def ProcessImage(self, imgname):
@@ -96,9 +125,70 @@ class Recognition(QDockWidget):
     objects_detected = pyqtSignal(tuple)
 
     # private methods
-    def _prepare_training_data(self):
-        td = TrainingData()
-        td.exportData(label_path, data_path, labelmap)
+    def _set_training_properties(self):
+        try:
+            ts = TrainingSettings(self, self._source_model_folder, self._train_model_folder, self._inference_graph_folder)
+            res = ts.exec_()
+            if res:
+                self._source_model_folder, self._train_model_folder, self._inference_graph_folder = ts.getResult()
+        except:
+            traceback.print_exc()
+            exctype, value = sys.exc_info()[:2]
+            self.signals.error.emit((exctype, value, traceback.format_exc()))
+
+    def _export_training_data(self):
+        if self._exporting_data_in_progress:
+            self._cancel_exporting = True
+            return
+
+        self._exporting_data_in_progress = True
+        self._cancel_exporting = False
+        try:
+            ps = ProgramState.getInstance()
+            label_map_path = ps.labelMapPath
+            label_save_dir = ps.defaultSaveDir
+            source_model_folder = self._source_model_folder
+            train_model_folder = self._train_model_folder
+
+            worker = ProgressingWorker(self._export_training_data_func, label_map_path, label_save_dir, source_model_folder, train_model_folder)  # Any other args, kwargs are passed to the run function
+            worker.signals.error.connect(self._on_export_training_data_error)
+            worker.signals.finished.connect(self._on_export_training_data_finished)
+            worker.signals.progress.connect(self._on_export_training_data_progress)
+
+            # Execute
+            self._threadPool.start(worker)
+            self._exportTrainingDataButton.setText("Cancel export")
+        except:
+            traceback.print_exc()
+            exctype, value = sys.exc_info()[:2]
+            self.signals.error.emit((exctype, value, traceback.format_exc()))
+
+    def _export_training_data_func(self, label_map_path: str, label_save_dir: str, source_model_folder: str,
+                                   train_model_folder: str, progress_callback):
+        res = self._training_data.exportData(label_map_path, label_save_dir, source_model_folder, train_model_folder, progress_callback)
+        if not res:
+            pass
+
+    def _on_export_training_data_error(self, restuple):
+        str = restuple[1]
+
+    def _on_export_training_data_progress(self, step: int, status: str):
+        s = step
+        msg = status
+
+        if self._cancel_exporting:
+            self._training_data.cancel()
+
+    def _on_export_training_data_finished(self):
+        self._exportTrainingDataButton.setText("Export training data")
+        self._exporting_data_in_progress = False
+        self._cancel_exporting = False
+
+    def _run_training(self):
+        pass
+
+    def _export_inference_graph(self):
+        pass
 
     def _process_detection_queue(self):
         if self._detectionInProgress or self._currentObjectDetector is None:
@@ -110,7 +200,7 @@ class Recognition(QDockWidget):
             self._detectionQueue = self._detectionQueue[1:]
 
             #  run detection in separate thread
-            worker = Worker(self._detect_objects, imageName)  # Any other args, kwargs are passed to the run function
+            worker = Worker(self._detect_objects_func, imageName)  # Any other args, kwargs are passed to the run function
             worker.signals.result.connect(self._on_detection_result)
             worker.signals.error.connect(self._on_detection_error)
             worker.signals.finished.connect(self._on_detection_finished)
@@ -119,7 +209,7 @@ class Recognition(QDockWidget):
             self._threadPool.start(worker)
 
 
-    def _detect_objects(self, image_path):
+    def _detect_objects_func(self, image_path):
         self._detectionModelsCombobox.setEnabled(False)
         self._runDetectionCheckbox.setEnabled(False)
         return (image_path, self._currentObjectDetector.detect(image_path))
@@ -140,7 +230,7 @@ class Recognition(QDockWidget):
         self._runDetection = self._runDetectionCheckbox.isChecked()
         self._detectionModelsCombobox.setVisible(self._runDetection)
 
-    def _load_model(self, modelName):
+    def _load_model_func(self, modelName):
         od = ObjectDetector(modelName)
         return od
 
@@ -215,7 +305,7 @@ class Recognition(QDockWidget):
             self._runDetectionCheckbox.setEnabled(False)
 
             #load model in separate thread
-            worker = Worker(self._load_model, newModelName)  # Any other args, kwargs are passed to the run function
+            worker = Worker(self._load_model_func, newModelName)  # Any other args, kwargs are passed to the run function
             worker.signals.result.connect(self._on_loading_result)
             worker.signals.error.connect(self._on_loading_error)
             worker.signals.finished.connect(self._on_loading_finished)

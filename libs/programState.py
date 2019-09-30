@@ -4,7 +4,7 @@ import traceback, sys
 
 class ProgramStateSignals(QObject):
     labelMapPathChanged = pyqtSignal(str)
-
+    defaultSaveDirChanged = pyqtSignal(str)
 
 class ProgramState:
     __instance = None
@@ -25,6 +25,7 @@ class ProgramState:
             ProgramState.__instance = self
 
         self.__labelMapPath = None
+        self.__defaultSaveDir = None
 
         self.signals = ProgramStateSignals()
 
@@ -37,4 +38,12 @@ class ProgramState:
         self.__labelMapPath = val
         self.signals.labelMapPathChanged.emit(self.__labelMapPath)
 
+    @property
+    def defaultSaveDir(self):
+        return self.__defaultSaveDir
+
+    @defaultSaveDir.setter
+    def defaultSaveDir(self, val):
+        self.__defaultSaveDir = val
+        self.signals.defaultSaveDirChanged.emit(self.__defaultSaveDir)
 
