@@ -1,16 +1,15 @@
-
 from PyQt5.QtGui import *
 from PyQt5.QtCore import *
 from PyQt5.QtWidgets import *
 
-from libs.threading import *
-from libs.objectDetector import *
-from libs.detectedShape import *
-from libs.trainingData import *
-from libs.trainingSettings import *
 import time
 import pickle
 
+from libs.threading import *
+from libs.objectDetector import *
+from libs.trainingData import *
+from libs.trainingSettings import *
+from libs.namedImage import *
 
 ADD_MODEL_COMMAND = '<< Add Model >>'
 RUN_DETECTION = 'RunDetection'
@@ -82,7 +81,6 @@ class Recognition(QDockWidget):
         self._cancel_exporting = False
         self._training_data = TrainingData()
 
-
         self._exportTrainingDataButton = QPushButton("Export training data")
         self._exportTrainingDataButton.clicked.connect(self._export_training_data)
 
@@ -110,15 +108,16 @@ class Recognition(QDockWidget):
 
     # Public methods
     def Settings(self):
-        settings = {RUN_DETECTION: self._runDetection, MODEL_LIST: self._modelList, CURRENT_MODEL_NAME: self._currentModelName,
+        settings = {RUN_DETECTION: self._runDetection, MODEL_LIST: self._modelList,
+                    CURRENT_MODEL_NAME: self._currentModelName,
                     SOURCE_MODEL_FOLDER: self._source_model_folder,
                     TRAIN_MODEL_FOLDER: self._train_model_folder,
                     INFERENCE_GRAPH_FOLDER: self._inference_graph_folder}
 
         return pickle.dumps(settings)
 
-    def ProcessImage(self, imgname):
-        self._detectionQueue.append(imgname)
+    def ProcessImage(self, image):
+        self._detectionQueue.append(image)
         self._process_detection_queue()
 
     # signals
@@ -127,7 +126,8 @@ class Recognition(QDockWidget):
     # private methods
     def _set_training_properties(self):
         try:
-            ts = TrainingSettings(self, self._source_model_folder, self._train_model_folder, self._inference_graph_folder)
+            ts = TrainingSettings(self, self._source_model_folder, self._train_model_folder,
+                                  self._inference_graph_folder)
             res = ts.exec_()
             if res:
                 self._source_model_folder, self._train_model_folder, self._inference_graph_folder = ts.getResult()
@@ -150,7 +150,9 @@ class Recognition(QDockWidget):
             source_model_folder = self._source_model_folder
             train_model_folder = self._train_model_folder
 
-            worker = ProgressingWorker(self._export_training_data_func, label_map_path, label_save_dir, source_model_folder, train_model_folder)  # Any other args, kwargs are passed to the run function
+            worker = ProgressingWorker(self._export_training_data_func, label_map_path, label_save_dir,
+                                       source_model_folder,
+                                       train_model_folder)  # Any other args, kwargs are passed to the run function
             worker.signals.error.connect(self._on_export_training_data_error)
             worker.signals.finished.connect(self._on_export_training_data_finished)
             worker.signals.progress.connect(self._on_export_training_data_progress)
@@ -165,7 +167,8 @@ class Recognition(QDockWidget):
 
     def _export_training_data_func(self, label_map_path: str, label_save_dir: str, source_model_folder: str,
                                    train_model_folder: str, progress_callback):
-        res = self._training_data.exportData(label_map_path, label_save_dir, source_model_folder, train_model_folder, progress_callback)
+        res = self._training_data.exportData(label_map_path, label_save_dir, source_model_folder, train_model_folder,
+                                             progress_callback)
         if not res:
             pass
 
@@ -194,13 +197,13 @@ class Recognition(QDockWidget):
         if self._detectionInProgress or self._currentObjectDetector is None:
             return
 
-        if  len(self._detectionQueue) != 0:
+        if len(self._detectionQueue) != 0:
             self._detectionInProgress = True
-            imageName = self._detectionQueue[0]
+            image = self._detectionQueue[0]
             self._detectionQueue = self._detectionQueue[1:]
 
             #  run detection in separate thread
-            worker = Worker(self._detect_objects_func, imageName)  # Any other args, kwargs are passed to the run function
+            worker = Worker(self._detect_objects_func, image)  # Any other args, kwargs are passed to the run function
             worker.signals.result.connect(self._on_detection_result)
             worker.signals.error.connect(self._on_detection_error)
             worker.signals.finished.connect(self._on_detection_finished)
@@ -208,11 +211,10 @@ class Recognition(QDockWidget):
             # Execute
             self._threadPool.start(worker)
 
-
-    def _detect_objects_func(self, image_path):
+    def _detect_objects_func(self, image):
         self._detectionModelsCombobox.setEnabled(False)
         self._runDetectionCheckbox.setEnabled(False)
-        return (image_path, self._currentObjectDetector.detect(image_path))
+        return image.path, self._currentObjectDetector.detect(image)
 
     def _on_detection_result(self, detection_result):
         self.objects_detected.emit(detection_result)
@@ -226,7 +228,7 @@ class Recognition(QDockWidget):
         self._detectionInProgress = False
         self._process_detection_queue()
 
-    def _run_detection_changed(self, item= None):
+    def _run_detection_changed(self, item=None):
         self._runDetection = self._runDetectionCheckbox.isChecked()
         self._detectionModelsCombobox.setVisible(self._runDetection)
 
@@ -241,15 +243,15 @@ class Recognition(QDockWidget):
             # check if label maps are equivalent
             path_to_labels = ProgramState.getInstance().labelMapPath
             detector_label_map = objectDetector.getLabelMap()
-            if  not detector_label_map.IsEqual(LabelMap(path_to_labels)):
+            if not detector_label_map.IsEqual(LabelMap(path_to_labels)):
                 emsg = QMessageBox(self)
                 emsg.setIcon(QMessageBox.Warning)
                 emsg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
                 emsg.setText('Inconcistent Label Maps')
-                emsg.setInformativeText("Application's Label Map is not equal to Object Detector's Label Map. Do you want to change application Label Map?")
+                emsg.setInformativeText(
+                    "Application's Label Map is not equal to Object Detector's Label Map. Do you want to change application Label Map?")
                 emsg.setWindowTitle("ObjectDetector")
                 response = emsg.exec_()
-
 
     def _on_loading_finished(self):
         self._detectionModelsCombobox.setEnabled(True)
@@ -304,8 +306,9 @@ class Recognition(QDockWidget):
             self._detectionModelsCombobox.setEnabled(False)
             self._runDetectionCheckbox.setEnabled(False)
 
-            #load model in separate thread
-            worker = Worker(self._load_model_func, newModelName)  # Any other args, kwargs are passed to the run function
+            # load model in separate thread
+            worker = Worker(self._load_model_func,
+                            newModelName)  # Any other args, kwargs are passed to the run function
             worker.signals.result.connect(self._on_loading_result)
             worker.signals.error.connect(self._on_loading_error)
             worker.signals.finished.connect(self._on_loading_finished)

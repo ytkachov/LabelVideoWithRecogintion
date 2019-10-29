@@ -45,6 +45,9 @@ from libs.hashableQListWidgetItem import HashableQListWidgetItem
 from libs.recognitionWidget import *
 from libs.detectedShape import *
 from libs.labelMap import *
+from libs.videoFile import *
+from libs.imagesList import *
+from libs.folderImagesSource import *
 
 __appname__ = 'LabelVideo'
 
@@ -91,13 +94,12 @@ class MainWindow(QMainWindow, WindowMixin):
         self.usingYoloFormat = False
 
         # For loading all image under a directory
-        self.mImgList = []
-        self.dirname = None
         program_state.labelMapPath = settings.get(SETTING_LABELMAP_FILENAME, defaultPredefClassFile)
         self.labelMap = LabelMap(program_state.labelMapPath)
         program_state.signals.labelMapPathChanged.connect(self.onLabelMapPathChanged)
 
-        self.lastOpenDir = None
+        self._last_open_dir = None
+        self._current_image = QImage()
 
         # Whether we need to save or not.
         self.dirty = False
@@ -179,16 +181,9 @@ class MainWindow(QMainWindow, WindowMixin):
         self.dock.setObjectName(getStr('labels'))
         self.dock.setWidget(labelListContainer)
 
-        self.fileListWidget = QListWidget()
-        self.fileListWidget.itemDoubleClicked.connect(self.fileitemDoubleClicked)
-        filelistLayout = QVBoxLayout()
-        filelistLayout.setContentsMargins(0, 0, 0, 0)
-        filelistLayout.addWidget(self.fileListWidget)
-        fileListContainer = QWidget()
-        fileListContainer.setLayout(filelistLayout)
-        self.filedock = QDockWidget(getStr('fileList'), self)
-        self.filedock.setObjectName(getStr('files'))
-        self.filedock.setWidget(fileListContainer)
+        # create images list widget
+        self.imagesListDock = ImagesList(getStr('imagesList'), self.settings.get(SETTING_IMAGES_LIST), self)
+        self.imagesListDock.image_changed.connect(self.onImageChanged)
 
         # create auto-recognition properties widget
         self.recognitionDock = Recognition(getStr('recognitionProperties'), self.settings.get(SETTING_AUTO_DETECTION), self)
@@ -217,8 +212,6 @@ class MainWindow(QMainWindow, WindowMixin):
 
         self.setCentralWidget(scroll)
         self.addDockWidget(Qt.RightDockWidgetArea, self.dock)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.filedock)
-        self.filedock.setFeatures(QDockWidget.DockWidgetFloatable)
 
         self.dockFeatures = QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetFloatable
         self.dock.setFeatures(self.dock.features() ^ self.dockFeatures)
@@ -230,6 +223,9 @@ class MainWindow(QMainWindow, WindowMixin):
 
         openLabelMap = action(getStr('openLabelFile'), self.openLabelMapFile,
                       'Ctrl+O', 'open', getStr('openLabelFileDetail'))
+
+        openVideoFile = action('Load video', self.loadVideoFile,
+                      'Ctrl+Shift+V', 'open', 'Load video file for to label frames')
 
         opendir = action(getStr('openDir'), self.openDirDialog,
                          'Ctrl+u', 'open', getStr('openDir'))
@@ -383,7 +379,7 @@ class MainWindow(QMainWindow, WindowMixin):
                               zoom=zoom, zoomIn=zoomIn, zoomOut=zoomOut, zoomOrg=zoomOrg,
                               fitWindow=fitWindow, fitWidth=fitWidth,
                               zoomActions=zoomActions,
-                              fileMenuActions=(openLabelMap, opendir, save, saveAs, close, resetAll, quit),
+                              fileMenuActions=(openLabelMap, openVideoFile, opendir, save, saveAs, close, resetAll, quit),
                               beginner=(),
                               advanced=(),
                               editMenu=(edit, copy, delete, None, color1),
@@ -424,7 +420,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.autoRestore.setChecked(settings.get(SETTING_RESTORE_ON_START, True))
 
         addActions(self.menus.file,
-                   (openLabelMap, opendir, changeSavedir, self.autoRestore, openAnnotation, self.menus.recentFiles, save, save_format, saveAs, close, resetAll, quit))
+                   (openLabelMap, openVideoFile, opendir, changeSavedir, self.autoRestore, openAnnotation, self.menus.recentFiles, save, save_format, saveAs, close, resetAll, quit))
         addActions(self.menus.help, (help, showInfo))
         addActions(self.menus.view, (
             self.autoSaving,
@@ -445,20 +441,26 @@ class MainWindow(QMainWindow, WindowMixin):
 
         self.tools = self.toolbar('Tools')
         self.actions.beginner = (
-            openLabelMap, opendir, changeSavedir, openNextImg, openPrevImg, verify, save, save_format, None, create, copy, delete, None,
+            openLabelMap, openVideoFile, opendir, changeSavedir, openNextImg, openPrevImg, verify, save, save_format, None, create, copy, delete, None,
             zoomIn, zoom, zoomOut, fitWindow, fitWidth)
 
         self.actions.advanced = (
-            openLabelMap, opendir, changeSavedir, openNextImg, openPrevImg, save, save_format, None,
+            openLabelMap, openVideoFile, opendir, changeSavedir, openNextImg, openPrevImg, save, save_format, None,
             createMode, editMode, None,
             hideAll, showAll)
 
         self.statusBar().showMessage('%s started.' % __appname__)
         self.statusBar().show()
 
-        # Application state.
-        self.image = QImage()
-        self.filePath = ustr(defaultFilename)
+        self._file_path = None
+        self._video_file_path = None
+        self._video = None
+        if defaultFilename is not None:
+            if os.path.splitext(defaultFilename) in ('mov', 'avi'):
+                self._video_file_path = defaultFilename
+            else:
+                self._file_path = ustr(defaultFilename)
+
         self.recentFiles = []
         self.maxRecent = 7
         self.lineColor = None
@@ -487,8 +489,9 @@ class MainWindow(QMainWindow, WindowMixin):
         self.resize(size)
         self.move(position)
         saveDir = ustr(settings.get(SETTING_SAVE_DIR, None))
-        self.lastOpenDir = ustr(settings.get(SETTING_LAST_OPEN_DIR, None))
-        self.filePath = ustr(settings.get(SETTING_FILENAME, None))
+        self._last_open_dir = ustr(settings.get(SETTING_LAST_OPEN_DIR, None))
+        self._file_path = ustr(settings.get(SETTING_FILENAME, None))
+        self._video_file_path = ustr(settings.get(SETTING_VIDEO_FILENAME, None))
 
         if program_state.defaultSaveDir is None and saveDir is not None and os.path.exists(saveDir):
             program_state.defaultSaveDir = saveDir
@@ -525,12 +528,14 @@ class MainWindow(QMainWindow, WindowMixin):
         self.statusBar().addPermanentWidget(self.labelCoordinates)
 
         if self.autoRestore.isChecked():
-            if self.lastOpenDir and os.path.exists(self.lastOpenDir):
-                targetDirPath = ustr(self.lastOpenDir)
-                self.queueEvent(partial(self.importDirImages, targetDirPath))
+            if self._video_file_path and os.path.isfile(self._video_file_path):
+                # self.queueEvent(partial(self.setSourceVideo, self._video_file_path, self._file_path))
+                pass
 
-            if self.filePath and os.path.isfile(self.filePath):
-                self.queueEvent(partial(self.loadFile, self.filePath))
+            elif self._last_open_dir and os.path.exists(self._last_open_dir):
+                targetDirPath = ustr(self._last_open_dir)
+                self.queueEvent(partial(self.setSourceFolder, targetDirPath, self._file_path))
+
 
     def keyReleaseEvent(self, event):
         if event.key() == Qt.Key_Control:
@@ -626,7 +631,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.itemsToDetectedShapes.clear()
         self.detectedShapesToItems.clear()
         self.detectedLabelList.clear()
-        self.filePath = None
+        self._file_path = None
         self.imageData = None
         self.labelFile = None
         self.canvas.resetState()
@@ -670,10 +675,57 @@ class MainWindow(QMainWindow, WindowMixin):
 
     ## Callbacks ##
     def onObjectsDetected(self, detection_result):
-        if detection_result[0] == self.filePath:
+        if detection_result[0] == self._file_path:
             self.canvas.loadDetectedShapes(detection_result[1])
             for detectedShape in detection_result[1]:
                 self.addDetectedLabel(detectedShape)
+
+    def onImageChanged(self, image):
+        self.resetState()
+
+        self._current_image = image.qtimage
+        self.labelFile = None
+        self.canvas.verified = False
+
+        self.status("Loaded %s" % os.path.basename(image.path))
+        self._file_path = image.path
+        try:
+            self.canvas.loadPixmap(QPixmap.fromImage(self._current_image))
+
+            self.setClean()
+            self.canvas.setEnabled(True)
+            self.adjustScale(initial=True)
+            self.paintCanvas()
+            self.addRecentFile(self._file_path)
+            self.toggleActions(True)
+
+            # start object detection
+            self.recognitionDock.ProcessImage(image)
+
+            # Label xml file and show bound box according to its filename
+            # if self.usingPascalVocFormat is True:
+            program_state = ProgramState.getInstance()
+            if program_state.defaultSaveDir is not None:
+                basename = os.path.basename(os.path.splitext(self._file_path)[0])
+                xmlPath = os.path.join(program_state.defaultSaveDir, basename + XML_EXT)
+
+                if os.path.isfile(xmlPath):
+                    self.loadPascalXMLByFilename(xmlPath)
+
+            self.setWindowTitle(__appname__ + ' ' + self._file_path)
+
+            # Default : select last item if there is at least one item
+            if self.labelList.count():
+                self.labelList.setCurrentItem(self.labelList.item(self.labelList.count() - 1))
+                self.labelList.item(self.labelList.count() - 1).setSelected(True)
+
+            self.canvas.setFocus(True)
+        except:
+            traceback.print_exc()
+            exctype, value = sys.exc_info()[:2]
+            err = traceback.format_exc()
+
+        return True
 
     def showTutorialDialog(self):
         subprocess.Popen(self.screencastViewer + [self.screencast])
@@ -712,7 +764,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.labelSelectionChanged()
 
     def updateFileMenu(self):
-        currFilePath = self.filePath
+        currFilePath = self._file_path
 
         def exists(filename):
             return os.path.exists(filename)
@@ -744,14 +796,6 @@ class MainWindow(QMainWindow, WindowMixin):
             item.setText(text)
             item.setBackground(generateColorByText(text))
             self.setDirty()
-
-    # Tzutalin 20160906 : Add file list and dock to move faster
-    def fileitemDoubleClicked(self, item=None):
-        currIndex = self.mImgList.index(ustr(item.text()))
-        if currIndex < len(self.mImgList):
-            filename = self.mImgList[currIndex]
-            if filename:
-                self.loadFile(filename)
 
     # Add chris
     def btnstate(self, item= None):
@@ -915,17 +959,17 @@ class MainWindow(QMainWindow, WindowMixin):
             if self.usingPascalVocFormat is True:
                 if annotationFilePath[-4:].lower() != ".xml":
                     annotationFilePath += XML_EXT
-                self.labelFile.savePascalVocFormat(annotationFilePath, shapes, self.filePath, self.imageData,
+                self.labelFile.savePascalVocFormat(annotationFilePath, shapes, self._file_path, self.imageData,
                                                    self.lineColor.getRgb(), self.fillColor.getRgb())
             elif self.usingYoloFormat is True:
                 if annotationFilePath[-4:].lower() != ".txt":
                     annotationFilePath += TXT_EXT
-                self.labelFile.saveYoloFormat(annotationFilePath, shapes, self.filePath, self.imageData, self.labelMap.getLabels(),
+                self.labelFile.saveYoloFormat(annotationFilePath, shapes, self._file_path, self.imageData, self.labelMap.getLabels(),
                                               self.lineColor.getRgb(), self.fillColor.getRgb())
             else:
-                self.labelFile.save(annotationFilePath, shapes, self.filePath, self.imageData,
+                self.labelFile.save(annotationFilePath, shapes, self._file_path, self.imageData,
                                     self.lineColor.getRgb(), self.fillColor.getRgb())
-            print('Image:{0} -> Annotation:{1}'.format(self.filePath, annotationFilePath))
+            print('Image:{0} -> Annotation:{1}'.format(self._file_path, annotationFilePath))
             return True
         except LabelFileError as e:
             self.errorMessage(u'Error saving label data', u'<b>%s</b>' % e)
@@ -1144,119 +1188,14 @@ class MainWindow(QMainWindow, WindowMixin):
         for item, shape in self.itemsToShapes.items():
             item.setCheckState(Qt.Checked if value else Qt.Unchecked)
 
-    def loadFile(self, filePath=None):
-        """Load the specified file, or the last opened file if None."""
-        self.resetState()
-        self.canvas.setEnabled(False)
-        if filePath is None:
-            filePath = self.settings.get(SETTING_FILENAME)
-
-        # Make sure that filePath is a regular python string, rather than QString
-        filePath = ustr(filePath)
-
-        # Fix bug: An  index error after select a directory when open a new file.
-        unicodeFilePath = ustr(filePath)
-        unicodeFilePath = os.path.abspath(unicodeFilePath)
-        # Tzutalin 20160906 : Add file list and dock to move faster
-        # Highlight the file item
-        if unicodeFilePath and self.fileListWidget.count() > 0:
-            if unicodeFilePath in self.mImgList:
-                index = self.mImgList.index(unicodeFilePath)
-                fileWidgetItem = self.fileListWidget.item(index)
-                fileWidgetItem.setSelected(True)
-            else:
-                self.fileListWidget.clear()
-                self.mImgList.clear()
-
-        if unicodeFilePath and os.path.exists(unicodeFilePath):
-            if LabelFile.isLabelFile(unicodeFilePath):
-                try:
-                    self.labelFile = LabelFile(unicodeFilePath)
-                except LabelFileError as e:
-                    self.errorMessage(u'Error opening file',
-                                      (u"<p><b>%s</b></p>"
-                                       u"<p>Make sure <i>%s</i> is a valid label file.")
-                                      % (e, unicodeFilePath))
-                    self.status("Error reading %s" % unicodeFilePath)
-                    return False
-
-                self.imageData = self.labelFile.imageData
-                self.lineColor = QColor(*self.labelFile.lineColor)
-                self.fillColor = QColor(*self.labelFile.fillColor)
-                self.canvas.verified = self.labelFile.verified
-            else:
-                # Load image:
-                # read data first and store for saving into label file.
-                self.imageData = read(unicodeFilePath, None)
-                self.labelFile = None
-                self.canvas.verified = False
-
-            image = QImage.fromData(self.imageData)
-            if image.isNull():
-                self.errorMessage(u'Error opening file',
-                                  u"<p>Make sure <i>%s</i> is a valid image file." % unicodeFilePath)
-                self.status("Error reading %s" % unicodeFilePath)
-                return False
-
-            self.status("Loaded %s" % os.path.basename(unicodeFilePath))
-            self.image = image
-            self.filePath = unicodeFilePath
-            self.canvas.loadPixmap(QPixmap.fromImage(image))
-            if self.labelFile:
-                self.loadLabels(self.labelFile.shapes)
-
-            self.setClean()
-            self.canvas.setEnabled(True)
-            self.adjustScale(initial=True)
-            self.paintCanvas()
-            self.addRecentFile(self.filePath)
-            self.toggleActions(True)
-
-            # start object detection
-            self.recognitionDock.ProcessImage(self.filePath)
-
-            # Label xml file and show bound box according to its filename
-            # if self.usingPascalVocFormat is True:
-            program_state = ProgramState.getInstance()
-            if program_state.defaultSaveDir is not None:
-                basename = os.path.basename(os.path.splitext(self.filePath)[0])
-                xmlPath = os.path.join(program_state.defaultSaveDir, basename + XML_EXT)
-                txtPath = os.path.join(program_state.defaultSaveDir, basename + TXT_EXT)
-
-                """Annotation file priority:
-                PascalXML > YOLO
-                """
-                if os.path.isfile(xmlPath):
-                    self.loadPascalXMLByFilename(xmlPath)
-                elif os.path.isfile(txtPath):
-                    self.loadYOLOTXTByFilename(txtPath)
-            else:
-                xmlPath = os.path.splitext(filePath)[0] + XML_EXT
-                txtPath = os.path.splitext(filePath)[0] + TXT_EXT
-                if os.path.isfile(xmlPath):
-                    self.loadPascalXMLByFilename(xmlPath)
-                elif os.path.isfile(txtPath):
-                    self.loadYOLOTXTByFilename(txtPath)
-
-            self.setWindowTitle(__appname__ + ' ' + filePath)
-
-            # Default : select last item if there is at least one item
-            if self.labelList.count():
-                self.labelList.setCurrentItem(self.labelList.item(self.labelList.count()-1))
-                self.labelList.item(self.labelList.count()-1).setSelected(True)
-
-            self.canvas.setFocus(True)
-            return True
-        return False
-
     def resizeEvent(self, event):
-        if self.canvas and not self.image.isNull()\
-           and self.zoomMode != self.MANUAL_ZOOM:
+        if self.canvas and not self._current_image.isNull() and self.zoomMode != self.MANUAL_ZOOM:
             self.adjustScale()
+
         super(MainWindow, self).resizeEvent(event)
 
     def paintCanvas(self):
-        assert not self.image.isNull(), "cannot paint null image"
+        assert not self._current_image.isNull(), "cannot paint null image"
         self.canvas.scale = 0.01 * self.zoomWidget.value()
         self.canvas.adjustSize()
         self.canvas.update()
@@ -1288,7 +1227,7 @@ class MainWindow(QMainWindow, WindowMixin):
         settings = self.settings
 
         settings[SETTING_LABELMAP_FILENAME] = ProgramState.getInstance().labelMapPath
-        settings[SETTING_FILENAME] = self.filePath if self.filePath else ''
+        settings[SETTING_FILENAME] = self._file_path if self._file_path else ''
         settings[SETTING_WIN_SIZE] = self.size()
         settings[SETTING_WIN_POSE] = self.pos()
         settings[SETTING_WIN_STATE] = self.saveState()
@@ -1302,8 +1241,8 @@ class MainWindow(QMainWindow, WindowMixin):
         else:
             settings[SETTING_SAVE_DIR] = ''
 
-        if self.lastOpenDir:
-            settings[SETTING_LAST_OPEN_DIR] = self.lastOpenDir
+        if self._last_open_dir:
+            settings[SETTING_LAST_OPEN_DIR] = self._last_open_dir
         else:
             settings[SETTING_LAST_OPEN_DIR] = ''
 
@@ -1316,20 +1255,7 @@ class MainWindow(QMainWindow, WindowMixin):
 
     def loadRecent(self, filename):
         if self.mayContinue():
-            self.loadFile(filename)
-
-    def scanAllImages(self, folderPath):
-        extensions = ['.%s' % fmt.data().decode("ascii").lower() for fmt in QImageReader.supportedImageFormats()]
-        images = []
-
-        for root, dirs, files in os.walk(folderPath):
-            for file in files:
-                if file.lower().endswith(tuple(extensions)):
-                    relativePath = os.path.join(root, file)
-                    path = ustr(os.path.abspath(relativePath))
-                    images.append(path)
-        natural_sort(images, key=lambda x: x.lower())
-        return images
+            self._load_file(filename)
 
     def changeSavedirDialog(self, _value=False):
         program_state = ProgramState.getInstance()
@@ -1350,13 +1276,13 @@ class MainWindow(QMainWindow, WindowMixin):
         self.statusBar().show()
 
     def openAnnotationDialog(self, _value=False):
-        if self.filePath is None:
+        if self._file_path is None:
             self.statusBar().showMessage('Please select image first')
             self.statusBar().show()
             return
 
-        path = os.path.dirname(ustr(self.filePath))\
-            if self.filePath else '.'
+        path = os.path.dirname(ustr(self._file_path))\
+            if self._file_path else '.'
         if self.usingPascalVocFormat:
             filters = "Open Annotation XML file (%s)" % ' '.join(['*.xml'])
             filename = ustr(QFileDialog.getOpenFileName(self,'%s - Choose a xml file' % __appname__, path, filters))
@@ -1370,33 +1296,29 @@ class MainWindow(QMainWindow, WindowMixin):
             return
 
         defaultOpenDirPath = dirpath if dirpath else '.'
-        if self.lastOpenDir and os.path.exists(self.lastOpenDir):
-            defaultOpenDirPath = self.lastOpenDir
+        if self._last_open_dir and os.path.exists(self._last_open_dir):
+            defaultOpenDirPath = self._last_open_dir
         else:
-            defaultOpenDirPath = os.path.dirname(self.filePath) if self.filePath else '.'
+            defaultOpenDirPath = os.path.dirname(self._file_path) if self._file_path else '.'
 
         targetDirPath = ustr(QFileDialog.getExistingDirectory(self,
                                                      '%s - Open Directory' % __appname__, defaultOpenDirPath,
                                                      QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks))
         self.importDirImages(targetDirPath)
 
-    def importDirImages(self, dirpath):
+    def setSourceFolder(self, dirpath, filename):
         if not self.mayContinue() or not dirpath:
             return
 
-        self.lastOpenDir = dirpath
-        self.dirname = dirpath
-        self.filePath = None
-        self.fileListWidget.clear()
-        self.mImgList = self.scanAllImages(dirpath)
-        self.openNextImg()
-        for imgPath in self.mImgList:
-            item = QListWidgetItem(imgPath)
-            self.fileListWidget.addItem(item)
+        self._last_open_dir = dirpath
+        images_source = FolderImagesSource(dirpath)
+        self.imagesListDock.SetSource(images_source)
+        self.imagesListDock.SetImage(filename)
+
 
     def verifyImg(self, _value=False):
         # Proceding next image without dialog if having any label
-        if self.filePath is not None:
+        if self._file_path is not None:
             try:
                 self.labelFile.toggleVerify()
             except AttributeError:
@@ -1413,7 +1335,6 @@ class MainWindow(QMainWindow, WindowMixin):
             self.saveFile()
 
     def openPrevImg(self, _value=False):
-        # Proceding prev image without dialog if having any label
         if self.autoSaving.isChecked():
             program_state = ProgramState.getInstance()
             if program_state.defaultSaveDir is not None:
@@ -1426,20 +1347,9 @@ class MainWindow(QMainWindow, WindowMixin):
         if not self.mayContinue():
             return
 
-        if len(self.mImgList) <= 0:
-            return
-
-        if self.filePath is None:
-            return
-
-        currIndex = self.mImgList.index(self.filePath)
-        if currIndex - 1 >= 0:
-            filename = self.mImgList[currIndex - 1]
-            if filename:
-                self.loadFile(filename)
+        self.imagesListDock.SetPrevImage()
 
     def openNextImg(self, _value=False):
-        # Proceding prev image without dialog if having any label
         if self.autoSaving.isChecked():
             program_state = ProgramState.getInstance()
             if program_state.defaultSaveDir is not None:
@@ -1452,51 +1362,55 @@ class MainWindow(QMainWindow, WindowMixin):
         if not self.mayContinue():
             return
 
-        if len(self.mImgList) <= 0:
-            return
-
-        filename = None
-        if self.filePath is None:
-            filename = self.mImgList[0]
-        else:
-            currIndex = self.mImgList.index(self.filePath)
-            if currIndex + 1 < len(self.mImgList):
-                filename = self.mImgList[currIndex + 1]
-
-        if filename:
-            self.loadFile(filename)
+        self.imagesListDock.SetNextImage()
 
     def openLabelMapFile(self, _value=False):
-        path = os.path.dirname(ustr(self.filePath)) if self.filePath else '.'
+        path = os.path.dirname(ustr(self._file_path)) if self._file_path else '.'
         filters = "TensorFlow Label Map files (*.pbtxt)"
 
         dlg = QFileDialog(self, '%s - Choose Label file' % __appname__, path, filters)
         dlg.setAcceptMode(QFileDialog.AcceptOpen)
         dlg.setOption(QFileDialog.DontUseNativeDialog, False)
+        filename = None
         if dlg.exec_():
             filename = ustr(dlg.selectedFiles()[0])
 
         if filename:
             ProgramState.getInstance().labelMapPath = filename
 
+    def loadVideoFile(self):
+        path = os.path.dirname(ustr(self._video_file_path)) if self._video_file_path else '.'
+        filters = "Video files (*.mov,*.avi)"
+
+        dlg = QFileDialog(self, '%s - Choose Video file' % __appname__, path, filters)
+        dlg.setAcceptMode(QFileDialog.AcceptOpen)
+        dlg.setOption(QFileDialog.DontUseNativeDialog, False)
+
+        filename = None
+        if dlg.exec_():
+            filename = ustr(dlg.selectedFiles()[0])
+
+        if filename:
+            ProgramState.getInstance().videoFilePath = filename
+            self._load_video_file(filename)
 
     def saveFile(self, _value=False):
         program_state = ProgramState.getInstance()
         if program_state.defaultSaveDir is not None and len(ustr(program_state.defaultSaveDir)):
-            if self.filePath:
-                imgFileName = os.path.basename(self.filePath)
+            if self._file_path:
+                imgFileName = os.path.basename(self._file_path)
                 savedFileName = os.path.splitext(imgFileName)[0]
                 savedPath = os.path.join(ustr(program_state.defaultSaveDir), savedFileName)
                 self._saveFile(savedPath)
         else:
-            imgFileDir = os.path.dirname(self.filePath)
-            imgFileName = os.path.basename(self.filePath)
+            imgFileDir = os.path.dirname(self._file_path)
+            imgFileName = os.path.basename(self._file_path)
             savedFileName = os.path.splitext(imgFileName)[0]
             savedPath = os.path.join(imgFileDir, savedFileName)
             self._saveFile(savedPath if self.labelFile else self.saveFileDialog(removeExt=False))
 
     def saveFileAs(self, _value=False):
-        assert not self.image.isNull(), "cannot save empty image"
+        assert not self._current_image.isNull(), "cannot save empty image"
         self._saveFile(self.saveFileDialog())
 
     def saveFileDialog(self, removeExt=True):
@@ -1506,7 +1420,7 @@ class MainWindow(QMainWindow, WindowMixin):
         dlg = QFileDialog(self, caption, openDialogPath, filters)
         dlg.setDefaultSuffix(LabelFile.suffix[1:])
         dlg.setAcceptMode(QFileDialog.AcceptSave)
-        filenameWithoutExtension = os.path.splitext(self.filePath)[0]
+        filenameWithoutExtension = os.path.splitext(self._file_path)[0]
         dlg.selectFile(filenameWithoutExtension)
         dlg.setOption(QFileDialog.DontUseNativeDialog, False)
         if dlg.exec_():
@@ -1551,7 +1465,7 @@ class MainWindow(QMainWindow, WindowMixin):
                                     '<p><b>%s</b></p>%s' % (title, message))
 
     def currentPath(self):
-        return os.path.dirname(self.filePath) if self.filePath else '.'
+        return os.path.dirname(self._file_path) if self._file_path else '.'
 
     def chooseColor1(self):
         color = self.colorDialog.getColor(self.lineColor, u'Choose line color',
@@ -1596,7 +1510,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.setDirty()
 
     def loadPascalXMLByFilename(self, xmlPath):
-        if self.filePath is None:
+        if self._file_path is None:
             return
         if os.path.isfile(xmlPath) is False:
             return
@@ -1609,7 +1523,7 @@ class MainWindow(QMainWindow, WindowMixin):
         self.canvas.verified = tVocParseReader.verified
 
     def loadYOLOTXTByFilename(self, txtPath):
-        if self.filePath is None:
+        if self._file_path is None:
             return
         if os.path.isfile(txtPath) is False:
             return
@@ -1629,14 +1543,6 @@ def inverted(color):
     return QColor(*[255 - v for v in color.getRgb()])
 
 
-def read(filename, default=None):
-    try:
-        with open(filename, 'rb') as f:
-            return f.read()
-    except:
-        return default
-
-
 def get_main_app(argv=[]):
     """
     Standard boilerplate Qt application code.
@@ -1649,7 +1555,7 @@ def get_main_app(argv=[]):
     app.setStyle('Fusion')
 
     # Tzutalin 201705+: Accept extra agruments to change predefined class file
-    # Usage : LabelVideo.py image predefClassFile saveDir
+    # Usage : LabelVideo.py image predefClasse saveDir
     win = MainWindow(argv[1] if len(argv) >= 2 else None,
                      argv[2] if len(argv) >= 3 else os.path.join(os.path.dirname(sys.argv[0]), 'data', 'labelmap.pbtxt'),
                      argv[3] if len(argv) >= 4 else None)
@@ -1661,6 +1567,7 @@ def main():
     '''construct main app and run it'''
     app, _win = get_main_app(sys.argv)
     return app.exec_()
+
 
 if __name__ == '__main__':
     sys.exit(main())

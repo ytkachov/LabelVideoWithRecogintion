@@ -110,7 +110,7 @@ class Canvas(QWidget):
 
         # Update coordinates in status bar if image is opened
         window = self.parent().window()
-        if window.filePath is not None:
+        if window._file_path is not None:
             self.parent().window().labelCoordinates.setText(
                 'X: %d; Y: %d' % (pos.x(), pos.y()))
 

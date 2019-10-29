@@ -4,6 +4,7 @@ import traceback, sys
 
 class ProgramStateSignals(QObject):
     labelMapPathChanged = pyqtSignal(str)
+    videoFileChanged = pyqtSignal(str)
     defaultSaveDirChanged = pyqtSignal(str)
 
 class ProgramState:
@@ -26,6 +27,7 @@ class ProgramState:
 
         self.__labelMapPath = None
         self.__defaultSaveDir = None
+        self.__videoFilePath = None
 
         self.signals = ProgramStateSignals()
 
@@ -37,6 +39,15 @@ class ProgramState:
     def labelMapPath(self, val):
         self.__labelMapPath = val
         self.signals.labelMapPathChanged.emit(self.__labelMapPath)
+
+    @property
+    def videoFilePath(self):
+        return self.__videoFilePath
+
+    @videoFilePath.setter
+    def videoFilePath(self, val):
+        self.__videoFilePath = val
+        self.signals.videoFileChanged.emit(self.__videoFilePath)
 
     @property
     def defaultSaveDir(self):

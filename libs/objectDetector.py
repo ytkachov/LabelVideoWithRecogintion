@@ -99,8 +99,8 @@ class ObjectDetector:
     def getLabelMap(self):
         return self._label_map
 
-    def detect(self, img_path: str) -> object:
-        img = Image.open(img_path)
+    def detect(self, namedimage: object) -> object:
+        img = namedimage.image
         width, height = img.size
 
         image_np = self._load_image_into_numpy_array(img)
