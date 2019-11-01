@@ -92,18 +92,13 @@ class ObjectDetector:
 
         return output_dict
 
-    def _load_image_into_numpy_array(self, img):
-        (im_width, im_height) = img.size
-        return np.array(img.getdata()).reshape((im_height, im_width, 3)).astype(np.uint8)
-
     def getLabelMap(self):
         return self._label_map
 
     def detect(self, namedimage: object) -> object:
-        img = namedimage.image
-        width, height = img.size
 
-        image_np = self._load_image_into_numpy_array(img)
+        image_np = namedimage.npimage
+        width, height = namedimage.size
         image_np_expanded = np.expand_dims(image_np, axis=0)
         with self._detection_graph.as_default():
             output_dict = self._run_inference_for_single_image(image_np_expanded)

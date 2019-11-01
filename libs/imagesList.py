@@ -40,6 +40,9 @@ class ImagesList(QDockWidget):
             item = QListWidgetItem(imgname)
             self._image_list_widget.addItem(item)
 
+    def SaveCurrentImage(self) -> str:
+        return self._images_source.SaveCurrentImage()
+
     def SetImage(self, imgname):
         if not self._images_source:
             return

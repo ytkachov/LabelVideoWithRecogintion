@@ -40,7 +40,7 @@ class FolderImagesSource():
         path = ustr(os.path.abspath(relative_path))
         if os.path.exists(path) and os.path.isfile(path):
             img = NamedImage(filename)
-            res = img.LoadFromFile(path)
+            res = img.FromFile(path)
             return res, img
 
         return False, None

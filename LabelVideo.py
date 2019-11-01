@@ -48,6 +48,7 @@ from libs.labelMap import *
 from libs.videoFile import *
 from libs.imagesList import *
 from libs.folderImagesSource import *
+from libs.videoImagesSource import *
 
 __appname__ = 'LabelVideo'
 
@@ -99,7 +100,7 @@ class MainWindow(QMainWindow, WindowMixin):
         program_state.signals.labelMapPathChanged.connect(self.onLabelMapPathChanged)
 
         self._last_open_dir = None
-        self._current_image = QImage()
+        self._current_image = NamedImage("")
 
         # Whether we need to save or not.
         self.dirty = False
@@ -232,9 +233,6 @@ class MainWindow(QMainWindow, WindowMixin):
 
         changeSavedir = action(getStr('changeSaveDir'), self.changeSavedirDialog,
                                'Ctrl+r', 'open', getStr('changeSavedAnnotationDir'))
-
-        openAnnotation = action(getStr('openAnnotation'), self.openAnnotationDialog,
-                                'Ctrl+Shift+O', 'open', getStr('openAnnotationDetail'))
 
         openNextImg = action(getStr('nextImg'), self.openNextImg,
                              'd', 'next', getStr('nextImgDetail'))
@@ -420,7 +418,8 @@ class MainWindow(QMainWindow, WindowMixin):
         self.autoRestore.setChecked(settings.get(SETTING_RESTORE_ON_START, True))
 
         addActions(self.menus.file,
-                   (openLabelMap, openVideoFile, opendir, changeSavedir, self.autoRestore, openAnnotation, self.menus.recentFiles, save, save_format, saveAs, close, resetAll, quit))
+                   (openLabelMap, openVideoFile, opendir, changeSavedir, self.autoRestore, self.menus.recentFiles, save, save_format, saveAs, close, resetAll, quit))
+
         addActions(self.menus.help, (help, showInfo))
         addActions(self.menus.view, (
             self.autoSaving,
@@ -454,7 +453,6 @@ class MainWindow(QMainWindow, WindowMixin):
 
         self._file_path = None
         self._video_file_path = None
-        self._video = None
         if defaultFilename is not None:
             if os.path.splitext(defaultFilename) in ('mov', 'avi'):
                 self._video_file_path = defaultFilename
@@ -489,6 +487,8 @@ class MainWindow(QMainWindow, WindowMixin):
         self.resize(size)
         self.move(position)
         saveDir = ustr(settings.get(SETTING_SAVE_DIR, None))
+
+        self._storage_type = settings.get(SETTING_STORAGE_TYPE, STORAGE_TYPE_FOLDER)
         self._last_open_dir = ustr(settings.get(SETTING_LAST_OPEN_DIR, None))
         self._file_path = ustr(settings.get(SETTING_FILENAME, None))
         self._video_file_path = ustr(settings.get(SETTING_VIDEO_FILENAME, None))
@@ -528,11 +528,9 @@ class MainWindow(QMainWindow, WindowMixin):
         self.statusBar().addPermanentWidget(self.labelCoordinates)
 
         if self.autoRestore.isChecked():
-            if self._video_file_path and os.path.isfile(self._video_file_path):
-                # self.queueEvent(partial(self.setSourceVideo, self._video_file_path, self._file_path))
-                pass
-
-            elif self._last_open_dir and os.path.exists(self._last_open_dir):
+            if self._storage_type == STORAGE_TYPE_VIDEO and self._video_file_path and os.path.isfile(self._video_file_path):
+                self.queueEvent(partial(self.setSourceVideo, ustr(self._video_file_path), self._file_path))
+            elif self._storage_type == STORAGE_TYPE_FOLDER and self._last_open_dir and os.path.isdir(self._last_open_dir):
                 targetDirPath = ustr(self._last_open_dir)
                 self.queueEvent(partial(self.setSourceFolder, targetDirPath, self._file_path))
 
@@ -632,7 +630,6 @@ class MainWindow(QMainWindow, WindowMixin):
         self.detectedShapesToItems.clear()
         self.detectedLabelList.clear()
         self._file_path = None
-        self.imageData = None
         self.labelFile = None
         self.canvas.resetState()
         self.labelCoordinates.clear()
@@ -683,14 +680,14 @@ class MainWindow(QMainWindow, WindowMixin):
     def onImageChanged(self, image):
         self.resetState()
 
-        self._current_image = image.qtimage
+        self._current_image = image
         self.labelFile = None
         self.canvas.verified = False
 
         self.status("Loaded %s" % os.path.basename(image.path))
         self._file_path = image.path
         try:
-            self.canvas.loadPixmap(QPixmap.fromImage(self._current_image))
+            self.canvas.loadPixmap(QPixmap.fromImage(self._current_image.qtimage))
 
             self.setClean()
             self.canvas.setEnabled(True)
@@ -706,7 +703,7 @@ class MainWindow(QMainWindow, WindowMixin):
             # if self.usingPascalVocFormat is True:
             program_state = ProgramState.getInstance()
             if program_state.defaultSaveDir is not None:
-                basename = os.path.basename(os.path.splitext(self._file_path)[0])
+                basename = os.path.basename(os.path.splitext(image.savepath)[0])
                 xmlPath = os.path.join(program_state.defaultSaveDir, basename + XML_EXT)
 
                 if os.path.isfile(xmlPath):
@@ -939,8 +936,9 @@ class MainWindow(QMainWindow, WindowMixin):
 
         self.canvas.loadShapes(s)
 
-    def saveLabels(self, annotationFilePath):
+    def saveLabels(self, annotationFilePath, imageFilePath):
         annotationFilePath = ustr(annotationFilePath)
+        imageFilePath = ustr(imageFilePath)
         if self.labelFile is None:
             self.labelFile = LabelFile()
             self.labelFile.verified = self.canvas.verified
@@ -959,15 +957,15 @@ class MainWindow(QMainWindow, WindowMixin):
             if self.usingPascalVocFormat is True:
                 if annotationFilePath[-4:].lower() != ".xml":
                     annotationFilePath += XML_EXT
-                self.labelFile.savePascalVocFormat(annotationFilePath, shapes, self._file_path, self.imageData,
+                self.labelFile.savePascalVocFormat(annotationFilePath, shapes, imageFilePath,
                                                    self.lineColor.getRgb(), self.fillColor.getRgb())
             elif self.usingYoloFormat is True:
                 if annotationFilePath[-4:].lower() != ".txt":
                     annotationFilePath += TXT_EXT
-                self.labelFile.saveYoloFormat(annotationFilePath, shapes, self._file_path, self.imageData, self.labelMap.getLabels(),
+                self.labelFile.saveYoloFormat(annotationFilePath, shapes, imageFilePath, self.labelMap.getLabels(),
                                               self.lineColor.getRgb(), self.fillColor.getRgb())
             else:
-                self.labelFile.save(annotationFilePath, shapes, self._file_path, self.imageData,
+                self.labelFile.save(annotationFilePath, shapes, imageFilePath,
                                     self.lineColor.getRgb(), self.fillColor.getRgb())
             print('Image:{0} -> Annotation:{1}'.format(self._file_path, annotationFilePath))
             return True
@@ -1246,6 +1244,13 @@ class MainWindow(QMainWindow, WindowMixin):
         else:
             settings[SETTING_LAST_OPEN_DIR] = ''
 
+        if self._video_file_path:
+            settings[SETTING_VIDEO_FILENAME] = self._video_file_path
+        else:
+            settings[SETTING_VIDEO_FILENAME] = ''
+
+        settings[SETTING_STORAGE_TYPE] = self._storage_type
+
         settings[SETTING_AUTO_SAVE] = self.autoSaving.isChecked()
         settings[SETTING_SINGLE_CLASS] = self.singleClassMode.isChecked()
         settings[SETTING_PAINT_LABEL] = self.displayLabelOption.isChecked()
@@ -1275,22 +1280,6 @@ class MainWindow(QMainWindow, WindowMixin):
                                      ('Change saved folder', program_state.defaultSaveDir))
         self.statusBar().show()
 
-    def openAnnotationDialog(self, _value=False):
-        if self._file_path is None:
-            self.statusBar().showMessage('Please select image first')
-            self.statusBar().show()
-            return
-
-        path = os.path.dirname(ustr(self._file_path))\
-            if self._file_path else '.'
-        if self.usingPascalVocFormat:
-            filters = "Open Annotation XML file (%s)" % ' '.join(['*.xml'])
-            filename = ustr(QFileDialog.getOpenFileName(self,'%s - Choose a xml file' % __appname__, path, filters))
-            if filename:
-                if isinstance(filename, (tuple, list)):
-                    filename = filename[0]
-            self.loadPascalXMLByFilename(filename)
-
     def openDirDialog(self, _value=False, dirpath=None):
         if not self.mayContinue():
             return
@@ -1304,17 +1293,28 @@ class MainWindow(QMainWindow, WindowMixin):
         targetDirPath = ustr(QFileDialog.getExistingDirectory(self,
                                                      '%s - Open Directory' % __appname__, defaultOpenDirPath,
                                                      QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks))
-        self.importDirImages(targetDirPath)
+        if targetDirPath:
+            self.setSourceFolder(targetDirPath, self._file_path)
 
     def setSourceFolder(self, dirpath, filename):
         if not self.mayContinue() or not dirpath:
             return
 
+        self._storage_type = STORAGE_TYPE_FOLDER
         self._last_open_dir = dirpath
         images_source = FolderImagesSource(dirpath)
         self.imagesListDock.SetSource(images_source)
         self.imagesListDock.SetImage(filename)
 
+    def setSourceVideo(self, videopath, filename):
+        if not self.mayContinue() or not videopath:
+            return
+
+        self._storage_type = STORAGE_TYPE_VIDEO
+        self._video_file_path = videopath
+        images_source = VideoImagesSource(videopath)
+        self.imagesListDock.SetSource(images_source)
+        self.imagesListDock.SetImage(filename)
 
     def verifyImg(self, _value=False):
         # Proceding next image without dialog if having any label
@@ -1380,7 +1380,7 @@ class MainWindow(QMainWindow, WindowMixin):
 
     def loadVideoFile(self):
         path = os.path.dirname(ustr(self._video_file_path)) if self._video_file_path else '.'
-        filters = "Video files (*.mov,*.avi)"
+        filters = "Video files (*.mov;*.avi;*mp4)"
 
         dlg = QFileDialog(self, '%s - Choose Video file' % __appname__, path, filters)
         dlg.setAcceptMode(QFileDialog.AcceptOpen)
@@ -1392,24 +1392,26 @@ class MainWindow(QMainWindow, WindowMixin):
 
         if filename:
             ProgramState.getInstance().videoFilePath = filename
-            self._load_video_file(filename)
+            self.setSourceVideo(filename, "")
 
-    def saveFile(self, _value=False):
+    def saveFile(self):
+        imagepath = self._current_image.Save()
+
         program_state = ProgramState.getInstance()
         if program_state.defaultSaveDir is not None and len(ustr(program_state.defaultSaveDir)):
-            if self._file_path:
-                imgFileName = os.path.basename(self._file_path)
+            if imagepath:
+                imgFileName = os.path.basename(imagepath)
                 savedFileName = os.path.splitext(imgFileName)[0]
                 savedPath = os.path.join(ustr(program_state.defaultSaveDir), savedFileName)
-                self._saveFile(savedPath)
+                self.saveLabelsFile(savedPath, imagepath)
         else:
-            imgFileDir = os.path.dirname(self._file_path)
-            imgFileName = os.path.basename(self._file_path)
+            imgFileDir = os.path.dirname(imagepath)
+            imgFileName = os.path.basename(imagepath)
             savedFileName = os.path.splitext(imgFileName)[0]
             savedPath = os.path.join(imgFileDir, savedFileName)
             self._saveFile(savedPath if self.labelFile else self.saveFileDialog(removeExt=False))
 
-    def saveFileAs(self, _value=False):
+    def saveFileAs(self):
         assert not self._current_image.isNull(), "cannot save empty image"
         self._saveFile(self.saveFileDialog())
 
@@ -1431,10 +1433,10 @@ class MainWindow(QMainWindow, WindowMixin):
                 return fullFilePath
         return ''
 
-    def _saveFile(self, annotationFilePath):
-        if annotationFilePath and self.saveLabels(annotationFilePath):
+    def saveLabelsFile(self, labelsFilePath, imageFilePath):
+        if labelsFilePath and self.saveLabels(labelsFilePath, imageFilePath):
             self.setClean()
-            self.statusBar().showMessage('Saved to  %s' % annotationFilePath)
+            self.statusBar().showMessage('Saved to  %s' % labelsFilePath)
             self.statusBar().show()
 
     def closeFile(self, _value=False):
